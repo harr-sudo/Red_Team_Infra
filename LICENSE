@@ -1,0 +1,53 @@
+All Rights Reserved
+
+Copyright (c) 2026 harr-sudo. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL — VIEW-ONLY PORTFOLIO LICENSE
+
+This software, including all source code, infrastructure-as-code, scripts,
+configuration, and accompanying documentation (collectively, the "Software"),
+is the proprietary work of the copyright holder.
+
+The Software is published in this public repository SOLELY for the purposes of
+portfolio review and evaluation viewing by prospective employers, clients,
+collaborators, and other interested parties. Publication for review does NOT
+constitute a grant of any license or right to use the Software.
+
+NO PERMISSION IS GRANTED, expressly or by implication, to any person obtaining
+or viewing a copy of the Software to use, copy, modify, merge, adapt, translate,
+publish, distribute, sublicense, sell, or otherwise exploit the Software or any
+part thereof, in whole or in part, in any form or by any means, for any purpose,
+without the prior written consent of the copyright holder.
+
+Without limiting the foregoing:
+
+  1. Viewing the Software on GitHub (or any other hosting platform) does not
+     grant any license or usage rights of any kind.
+
+  2. Forking the repository — where such functionality is enabled by the hosting
+     platform — is permitted by the platform for the mechanical purpose of
+     viewing only, and does not grant any right to use, run, modify, or
+     redistribute the Software.
+
+  3. No rights are granted to use the Software, in source or compiled form, in
+     any product, service, deployment, engagement, or derivative work.
+
+To request permission for any use beyond viewing, contact the copyright holder
+in writing.
+
+DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE.
+
+AUTHORIZED-USE NOTICE
+
+The Software automates offensive-security ("red team") infrastructure. It is
+intended only for lawful, authorized security testing conducted with explicit
+permission. Any grant of usage rights by the copyright holder is conditioned on
+the recipient's compliance with all applicable laws and possession of proper
+authorization for any environment in which the Software is used.

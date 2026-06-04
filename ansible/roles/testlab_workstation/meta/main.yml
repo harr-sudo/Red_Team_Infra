@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: testlab_workstation
+  author: Red Team Infra
+  description: >-
+    Configures a Windows 10/11 Pro workstation joined to testlab.local
+    as the endpoint target for phishing / macro-execution bolt-ons.
+    Installs a small set of base apps via winget, sets a known local
+    `ansible` admin password, installs RSAT-AD-PowerShell, and writes
+    the registry keys that allow Office macros to run without prompt.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions:
+        - "10"
+        - "11"
+  galaxy_tags:
+    - testlab
+    - workstation
+    - phishing
+    - macro
+    - lab
+
+dependencies: []

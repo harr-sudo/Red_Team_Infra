@@ -1,0 +1,488 @@
+# Access Methods for C2 Servers
+
+This document describes how operators access C2 team servers for operations and management.
+
+## Overview
+
+C2 servers are deployed in **private subnets** for security, which means they're not directly accessible from the internet.
+
+The **primary access path is the AWS-hosted Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host: every deployment branches out from it via VPC peering, so it reaches every instance directly. Operators connect: **laptop → (SSH key + IP allow-list) → Dashboard Server → instances**.
+
+Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server. There is **no per-deployment SSH-relay bastion** — it has been removed from the architecture; the Dashboard Server is the sole jump. The generic proxy/VPN/SSM access patterns further down are background reference for when the Dashboard Server is not in front of a deployment; in production, always route through the Dashboard Server EIP.
+
+---
+
+## Dashboard Server (Primary)
+
+The Dashboard Server sits inside AWS with VPC peering to all deployment VPCs, so it can reach every instance directly. It is the single jump host for all access.
+
+### Operator Access
+
+1. **SSH tunnel into the Dashboard Server** (public EIP, SSH key + IP allow-list):
+   ```bash
+   ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+   ```
+   Then open `http://localhost:5000` in your browser.
+
+2. **Terminal tab** — The dashboard provides an in-browser SSH terminal to all deployed instances (C2 team servers, redirectors, attack box, jumpbox). No manual SSH tunnels or bastion hopping required.
+
+3. **REST API** — The Cobalt Strike REST API and all management endpoints are reachable directly from the Dashboard Server via VPC peering. No port forwarding or tunnels needed on the server side.
+
+4. **CS Client tunnel** — The Cobalt Strike GUI client still runs on your laptop and needs a tunnel to the team server's port 50050, routed **through the Dashboard Server**. Use the **Tunnel button** in the Terminal tab to set this up, or manually:
+   ```bash
+   # Through the Dashboard Server EIP
+   ssh -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>
+   ```
+
+5. **RDP to attack box / GOAD VMs** — tunnel through the Dashboard Server:
+   ```bash
+   ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>
+   # then RDP to localhost:13389
+   ```
+
+### Why the Dashboard Server Is Simpler
+
+| Concern | Local dev (laptop) | Dashboard Server |
+|---------|--------------------|------------------|
+| AWS credentials | Configured on every operator laptop | IAM instance role on server (no creds on disk) |
+| SSH to instances | SSM / direct SSH to public hosts | Terminal tab in browser (single hop via peering) |
+| REST API access | SSH tunnel from laptop | Direct via VPC peering |
+| CS Client | Tunnel from laptop | Tunnel through Dashboard Server EIP |
+| Multi-operator | Each operator sets up everything | One server, operators just SSH tunnel in |
+
+---
+
+## Generic Access Patterns (Background Reference)
+
+> **Note:** The patterns below are **generic background reference** for accessing private-subnet C2 servers — useful for understanding the options, or when running the dashboard as a local dev instance. For day-to-day production operations, use the Dashboard Server above. Where these examples SSH into a proxy/redirector as the entry point, the production equivalent tunnels through the Dashboard Server EIP instead. **Note: there is no per-deployment SSH-relay bastion in this framework** — the Dashboard Server is the jump.
+
+---
+
+## Part 1: Operator Access (From Home - C2 Client Access)
+
+> **Reminder:** In production, operator access goes through the **Dashboard Server** (see [Dashboard Server (Primary)](#dashboard-server-primary) above). The options below are generic background patterns — the "Recommended" tags refer only to *within this background section*, not to the framework's production path.
+
+### Option 1: SSH Tunnel via Proxy/Redirector (background option)
+
+**How it works:**
+- SSH into proxy/redirector server (public IP)
+- Create SSH tunnel to C2 server (private IP)
+- Connect C2 client through tunnel
+
+**Steps:**
+```bash
+# 1. SSH tunnel from home to proxy
+ssh -L 50050:private-c2-ip:50050 ec2-user@proxy-elastic-ip -i key.pem
+
+# 2. Connect C2 client to localhost:50050
+# C2 client thinks it's connecting to localhost, but traffic goes through tunnel
+```
+
+**Pros:**
+- ✅ Simple setup
+- ✅ Encrypted (SSH)
+- ✅ No additional infrastructure
+- ✅ Works immediately after deployment
+
+**Cons:**
+- ⚠️ Requires SSH key management
+- ⚠️ Proxy server must be accessible
+- ⚠️ Single point of failure (if proxy goes down)
+
+---
+
+### Option 2: VPN Connection to VPC
+
+**How it works:**
+- Deploy VPN server (OpenVPN, WireGuard, or AWS Client VPN)
+- Connect from home to VPN
+- Access C2 servers directly via private IPs
+
+**Architecture:**
+```
+Home → VPN Server (Public Subnet) → C2 Server (Private Subnet)
+```
+
+**Implementation ideas:**
+- **AWS Client VPN**: Managed VPN service
+- **OpenVPN on EC2**: Self-hosted VPN server
+- **WireGuard on EC2**: Modern, lightweight VPN
+- **Tailscale/ZeroTier**: Mesh VPN solutions
+
+**Pros:**
+- ✅ Direct access to all C2 servers
+- ✅ Can access multiple servers simultaneously
+- ✅ More secure (VPN encryption)
+- ✅ Can access other VPC resources too
+
+**Cons:**
+- ⚠️ Additional infrastructure needed
+- ⚠️ Additional cost (~$30-50/month for VPN server)
+- ⚠️ More complex setup
+
+---
+
+### Option 3: Port Forwarding via Proxy/Redirector
+
+**How it works:**
+- Configure proxy/redirector to forward specific ports
+- Use tools like `socat`, `rinetd`, or `iptables`
+- Connect C2 client to proxy public IP
+
+**Example:**
+```bash
+# On proxy server
+socat TCP-LISTEN:50050,fork TCP:private-c2-ip:50050
+```
+
+**Pros:**
+- ✅ Simple for C2 client (connect to proxy IP)
+- ✅ No SSH tunnel needed
+- ✅ Can be automated
+
+**Cons:**
+- ⚠️ Less secure (direct port exposure)
+- ⚠️ Requires proxy configuration
+- ⚠️ Port management needed
+
+---
+
+### Option 4: SSH Jump Host (the Dashboard Server)
+
+**How it works:**
+- The AWS-hosted **Dashboard Server** is the dedicated jump host (its own VPC, public EIP, peered to every deployment VPC)
+- SSH through the Dashboard Server to C2 servers — no separate per-deployment relay host
+- Use SSH ProxyJump pointed at the Dashboard Server
+
+**Steps:**
+```bash
+# SSH config
+Host c2-server
+    HostName private-c2-ip
+    ProxyJump ubuntu@<dashboard-eip>
+    User ec2-user
+    IdentityFile ~/.ssh/key.pem
+
+# Connect
+ssh c2-server
+```
+
+**Pros:**
+- ✅ Single dedicated jump for every deployment (via VPC peering)
+- ✅ No per-deployment relay host to deploy or manage
+- ✅ IAM instance role — no AWS creds on operator laptops
+- ✅ In-browser Terminal tab as an alternative to manual SSH
+
+**Cons:**
+- ⚠️ Operators must have SSH access (key + IP allow-list) to the Dashboard Server
+
+---
+
+### Option 5: AWS Systems Manager Session Manager
+
+**How it works:**
+- Use AWS SSM Session Manager (no SSH needed)
+- Access via AWS CLI or console
+- Port forwarding through SSM
+
+**Steps:**
+```bash
+# Port forward through SSM
+aws ssm start-session \
+    --target i-1234567890abcdef0 \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters '{"portNumber":["50050"],"localPortNumber":["50050"]}'
+
+# Connect C2 client to localhost:50050
+```
+
+**Pros:**
+- ✅ No SSH keys needed
+- ✅ No open ports
+- ✅ Audit trail in CloudTrail
+- ✅ Works from anywhere with AWS CLI
+
+**Cons:**
+- ⚠️ Requires IAM roles on instances
+- ⚠️ Requires SSM agent
+- ⚠️ AWS CLI dependency
+
+---
+
+### Option 6: CloudFlare Tunnel / ngrok Alternative
+
+**How it works:**
+- Use tunneling service (CloudFlare Tunnel, ngrok, etc.)
+- Run tunnel agent on C2 server (via proxy)
+- Access via tunnel URL
+
+**Pros:**
+- ✅ No port forwarding needed
+- ✅ HTTPS by default
+- ✅ Can work behind NAT
+
+**Cons:**
+- ⚠️ Third-party dependency
+- ⚠️ Additional complexity
+- ⚠️ May have usage limits
+
+---
+
+## Part 2: Management Access (Remote Desktop/SSH)
+
+### Option 1: SSH via Proxy/Redirector (Same as Operator)
+
+**For SSH access:**
+```bash
+# Direct SSH to proxy, then SSH to C2
+ssh ec2-user@proxy-elastic-ip -i key.pem
+# Then from proxy:
+ssh ec2-user@private-c2-ip
+```
+
+**Pros:**
+- ✅ Simple
+- ✅ No additional infrastructure
+
+**Cons:**
+- ⚠️ Two-step process
+- ⚠️ Requires proxy access
+
+---
+
+### Option 2: SSH Tunnel for Remote Desktop
+
+**For RDP/VNC access:**
+```bash
+# SSH tunnel for RDP (port 3389)
+ssh -L 3389:private-c2-ip:3389 ec2-user@proxy-elastic-ip -i key.pem
+
+# Then connect RDP client to localhost:3389
+```
+
+**For VNC (port 5900):**
+```bash
+# SSH tunnel for VNC
+ssh -L 5900:private-c2-ip:5900 ec2-user@proxy-elastic-ip -i key.pem
+```
+
+**Pros:**
+- ✅ Full desktop access
+- ✅ Encrypted tunnel
+- ✅ Works with any remote desktop protocol
+
+**Cons:**
+- ⚠️ Requires desktop environment on C2 server
+- ⚠️ Higher bandwidth usage
+
+---
+
+### Option 3: AWS Systems Manager Session Manager
+
+**For terminal access:**
+```bash
+# Start interactive session
+aws ssm start-session --target i-1234567890abcdef0
+```
+
+**For port forwarding (RDP/VNC):**
+```bash
+# Forward RDP port
+aws ssm start-session \
+    --target i-1234567890abcdef0 \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters '{"portNumber":["3389"],"localPortNumber":["3389"]}'
+```
+
+**Pros:**
+- ✅ No SSH keys
+- ✅ No open ports
+- ✅ Audit trail
+- ✅ Works from anywhere
+
+**Cons:**
+- ⚠️ Requires IAM setup
+- ⚠️ No direct RDP (need port forwarding)
+
+---
+
+### Option 4: Guacamole (Remote Desktop Gateway)
+
+**How it works:**
+- Deploy Apache Guacamole on a public-subnet host (e.g. a redirector)
+- Web-based remote desktop gateway
+- Access via browser
+
+**Architecture:**
+```
+Browser → Guacamole (Public) → C2 Server (Private)
+```
+
+**Pros:**
+- ✅ Web-based (no client software)
+- ✅ Supports RDP, VNC, SSH
+- ✅ Centralized access management
+- ✅ Session recording
+
+**Cons:**
+- ⚠️ Additional setup
+- ⚠️ Requires web server
+- ⚠️ Security considerations (web exposure)
+
+---
+
+### Option 5: Dedicated Management Server
+
+**How it works:**
+- Deploy separate management server in public subnet
+- Install management tools (RDP server, VNC, etc.)
+- Access management server, then C2 servers
+
+**Pros:**
+- ✅ Separated from operational infrastructure
+- ✅ Can have different security rules
+- ✅ Dedicated management tools
+
+**Cons:**
+- ⚠️ Additional cost
+- ⚠️ Another server to maintain
+
+---
+
+### Option 6: VPN + Direct Access
+
+**How it works:**
+- Connect to VPN (see Option 2 above)
+- Access C2 servers directly via private IP
+- Use RDP/VNC/SSH directly
+
+**Pros:**
+- ✅ Direct access
+- ✅ Can access all servers
+- ✅ Secure
+
+**Cons:**
+- ⚠️ VPN infrastructure needed
+- ⚠️ Additional cost
+
+---
+
+## Comparison Matrix
+
+| Method | Operator Access | Management Access | Complexity | Cost | Security |
+|--------|----------------|-------------------|------------|------|----------|
+| **SSH Tunnel via Proxy** | ✅ Excellent | ✅ Good | Low | $0 | Medium |
+| **VPN to VPC** | ✅ Excellent | ✅ Excellent | Medium | $$ | High |
+| **Port Forwarding** | ✅ Good | ⚠️ Limited | Low | $0 | Medium |
+| **SSH Jump Host (Dashboard Server)** | ✅ Excellent | ✅ Excellent | Low | $ | High |
+| **AWS SSM** | ✅ Good | ✅ Good | Medium | $0 | High |
+| **CloudFlare Tunnel** | ✅ Good | ⚠️ Limited | Medium | $0 | Medium |
+| **Guacamole** | ⚠️ Limited | ✅ Excellent | High | $ | Medium |
+| **Management Server** | ⚠️ Limited | ✅ Excellent | Medium | $$ | Medium |
+
+---
+
+## Recommended Approaches
+
+### Production: The Dashboard Server (use this)
+
+For all day-to-day operations, route through the **Dashboard Server** — the AWS-hosted control plane and sole SSH/RDP jump:
+
+- **Operator access (C2 client):** `ssh -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>`, then connect Cobalt Strike to `localhost:50050` — or use the dashboard's in-browser Terminal/Tunnel shortcuts.
+- **Management access (RDP/SSH):** tunnel through the Dashboard Server (`ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>`) or use the Terminal tab. There is no per-deployment bastion.
+
+### Background options (when the Dashboard Server is not in front of a deployment)
+
+The generic patterns below apply for understanding the options or for a local dev instance — not the production path:
+
+- **SSH Tunnel via Proxy** — simple, no extra infra, encrypted (background only).
+- **VPN to VPC** — direct access to multiple servers; extra infra and cost.
+- **AWS SSM** — no SSH keys, audit trail via CloudTrail, enterprise-friendly.
+
+---
+
+## Security Considerations
+
+### All Methods Should Include:
+
+1. **IP Whitelisting**
+   - Restrict SSH/RDP access to your home IP
+   - Use security groups with management CIDR blocks
+
+2. **Key Management**
+   - Use SSH keys (not passwords)
+   - Rotate keys regularly
+   - Use different keys for different purposes
+
+3. **MFA/2FA**
+   - Enable MFA for AWS console
+   - Consider 2FA for SSH (if using password auth)
+
+4. **Audit Logging**
+   - Enable CloudTrail
+   - Log SSH access
+   - Monitor access patterns
+
+5. **Encryption**
+   - Always use encrypted connections
+   - SSH tunnels are encrypted
+   - VPN provides additional encryption
+
+---
+
+## Implementation Notes
+
+### Quick Start (SSH Tunnel)
+
+1. **Get proxy/redirector public IP:**
+   ```bash
+   aws ec2 describe-instances --filters "Name=tag:Type,Values=ProxyRedirector" --query 'Reservations[*].Instances[*].PublicIpAddress'
+   ```
+
+2. **Get C2 server private IP:**
+   ```bash
+   aws ec2 describe-instances --filters "Name=tag:Type,Values=C2TeamServer" --query 'Reservations[*].Instances[*].PrivateIpAddress'
+   ```
+
+3. **Create SSH tunnel:**
+   ```bash
+   ssh -L 50050:private-c2-ip:50050 ec2-user@proxy-ip -i ~/.ssh/key.pem
+   ```
+
+4. **Connect C2 client to `localhost:50050`**
+
+### VPN Setup (WireGuard Example)
+
+1. **Deploy WireGuard server on EC2** (public subnet)
+2. **Configure client** on your home machine
+3. **Connect to VPN**
+4. **Access C2 servers directly** via private IPs
+
+---
+
+## Cost Estimates
+
+| Method | Additional Monthly Cost |
+|--------|------------------------|
+| SSH Tunnel | $0 (uses existing proxy) |
+| VPN Server | ~$30-50 (t3.small instance) |
+| Dashboard Server jump | ~$32 (t3.medium, one per team — not per deployment) |
+| AWS SSM | $0 (included in EC2) |
+| Guacamole | ~$15-30 (t3.small instance) |
+
+---
+
+## Summary
+
+**Production (the answer for this framework):**
+- Route everything through the **Dashboard Server** — the AWS-hosted control plane and sole SSH/RDP jump host.
+- Operator path: laptop → (SSH key + IP allow-list) → Dashboard Server → instances (via VPC peering).
+- C2 client: `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>` (or the dashboard's Tunnel button).
+- Management/RDP: tunnel through the Dashboard Server, or use the in-browser Terminal tab.
+- There is **no per-deployment bastion**; running the dashboard on a laptop is a dev instance only.
+
+**Background options** (understanding the alternatives, or a local dev instance — not production):
+- SSH tunnel via proxy/redirector — simple, no extra cost.
+- VPN to the VPC — direct multi-server access, extra infra/cost.
+- AWS SSM — no SSH keys, audit trail; Guacamole — web-based RDP gateway.
+

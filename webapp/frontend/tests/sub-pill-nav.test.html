@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sub-Pill Nav Tests</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #ddd; }
+        .pass { color: #6c6; }
+        .fail { color: #f66; }
+        .test { padding: 4px 0; }
+        h1 { color: #cb8; }
+        h2 { color: #cb8; margin-top: 24px; border-bottom: 1px solid #444; padding-bottom: 4px; }
+        #summary { margin-top: 20px; padding: 12px; background: #222; }
+    </style>
+</head>
+<body>
+<h1>Deployment Sub-Pill Nav — Test Suite</h1>
+<div id="results"></div>
+<div id="summary"></div>
+
+<!-- Required DOM structure for tests (mirrors index.html deployments tab) -->
+<div id="fixture" style="display: none;">
+    <select id="global-header__deployment-select"></select>
+    <button id="global-header__new-deployment-btn"></button>
+    <button id="global-header__discard-draft-btn" style="display: none;"></button>
+    <button id="deployments-empty-state-cta"></button>
+    <nav class="sub-pill-nav">
+        <button class="sub-pill" data-sub-pill="manage"></button>
+        <button class="sub-pill" data-sub-pill="bolt-ons"></button>
+        <button class="sub-pill" data-sub-pill="configure"></button>
+        <button class="sub-pill" data-sub-pill="deploy"></button>
+    </nav>
+    <div class="sub-pill-page" data-sub-pill-page="manage" style="display:none;"></div>
+    <div class="sub-pill-page" data-sub-pill-page="bolt-ons" style="display:none;"></div>
+    <div class="sub-pill-page" data-sub-pill-page="configure" style="display:none;"></div>
+    <div class="sub-pill-page" data-sub-pill-page="deploy" style="display:none;"></div>
+    <div class="sub-pill-empty-state" id="deployments-empty-state" style="display:none;"></div>
+
+    <div class="scrim-takeover" id="manage-edit-drawer" hidden>
+        <div class="scrim-takeover__backdrop" data-drawer-dismiss></div>
+        <aside class="takeover-card">
+            <button class="takeover-card__close" data-drawer-dismiss></button>
+            <strong id="manage-edit-drawer-project"></strong>
+            <div id="manage-edit-drawer-body"></div>
+            <button id="manage-edit-drawer-save"></button>
+            <button id="manage-edit-drawer-apply"></button>
+        </aside>
+    </div>
+</div>
+
+<script>
+    // Stub minimal globals needed by app.js
+    window.API_BASE = '/api';
+
+    // Stub fetch — returns empty fleet
+    window.fetch = function(url) {
+        if (url.indexOf('/deploy/active') !== -1) {
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ success: true, deployments: [] })
+            });
+        }
+        if (url.indexOf('/config/') !== -1) {
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ project_name: 'test-proj', deployment_type: 'c2-adhoc', aws_region: 'eu-central-1' })
+            });
+        }
+        return Promise.reject(new Error('unstubbed: ' + url));
+    };
+
+    // Minimal APP scaffold so app.js attachments work
+    window.APP = {
+        currentPage: 'deployments',
+        pages: ['deployments'],
+        navigateTo: function(p) { this.currentPage = p; },
+    };
+
+    // We need just the activeDeployment / subPills / manageDrawer / parseDeploymentsHash slices.
+    // Inline-copy of those slices from app.js for hermetic testing:
+</script>
+
+<!-- Inline test fixture extracted to keep this file self-contained.
+     Mirrors the live implementation in webapp/frontend/js/app.js. -->
+<script>
+APP.activeDeployment = (function() {
+    const DRAFT_SENTINEL = '__draft__';
+    const ALL_SENTINEL = '__all__';
+    const state = { current: null, listeners: [] };
+    return {
+        DRAFT_SENTINEL, ALL_SENTINEL,
+        get current() { return state.current; },
+        isDraft() { return state.current === DRAFT_SENTINEL; },
+        isAll() { return state.current === ALL_SENTINEL; },
+        isExisting() {
+            return !!state.current && state.current !== DRAFT_SENTINEL && state.current !== ALL_SENTINEL;
+        },
+        set(v) { state.current = v || null; },
+    };
+})();
+
+APP.computeVisibleSubPills = function(activeDeployment) {
+    const isDraft    = activeDeployment.isDraft();
+    const isAll      = activeDeployment.isAll();
+    const isExisting = activeDeployment.isExisting();
+    return isDraft
+        ? ['configure', 'deploy']
+        : isAll
+            ? ['manage']
+            : isExisting
+                ? ['manage', 'bolt-ons']
+                : ['manage'];
+};
+
+APP.parseDeploymentsHash = function(hash) {
+    if (!hash) return null;
+    const clean = hash.replace(/^#/, '');
+    if (!clean.startsWith('deployments-tab')) return null;
+    const rest = clean.slice('deployments-tab'.length);
+    if (!rest) return { page: 'deployments', subPill: null, params: {} };
+    const m = rest.match(/^\/([a-zA-Z0-9_-]+)(?:\?(.*))?$/);
+    if (!m) return { page: 'deployments', subPill: null, params: {} };
+    const subPill = m[1];
+    const params = {};
+    if (m[2]) {
+        m[2].split('&').forEach(pair => {
+            if (!pair) return;
+            const [k, v] = pair.split('=');
+            params[decodeURIComponent(k)] = v == null ? '' : decodeURIComponent(v);
+        });
+    }
+    return { page: 'deployments', subPill, params };
+};
+</script>
+
+<script>
+    // === TEST RUNNER ===
+    const results = [];
+    function assert(name, cond, detail) {
+        results.push({ name, pass: !!cond, detail });
+    }
+    function assertEqual(name, actual, expected) {
+        const pass = JSON.stringify(actual) === JSON.stringify(expected);
+        results.push({ name, pass, detail: pass ? '' : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}` });
+    }
+
+    // ----- Visibility / mode tests -----
+    APP.activeDeployment.set(null);
+    assertEqual('dropdown unset → Manage only',
+        APP.computeVisibleSubPills(APP.activeDeployment), ['manage']);
+    assert('dropdown unset → not draft', !APP.activeDeployment.isDraft());
+    assert('dropdown unset → not all', !APP.activeDeployment.isAll());
+    assert('dropdown unset → not existing', !APP.activeDeployment.isExisting());
+
+    APP.activeDeployment.set('__draft__');
+    assert('__draft__ → isDraft', APP.activeDeployment.isDraft());
+    assert('__draft__ → !isAll', !APP.activeDeployment.isAll());
+    assert('__draft__ → !isExisting', !APP.activeDeployment.isExisting());
+    assertEqual('draft → Configure + Deploy',
+        APP.computeVisibleSubPills(APP.activeDeployment), ['configure', 'deploy']);
+
+    APP.activeDeployment.set('__all__');
+    assert('__all__ → isAll', APP.activeDeployment.isAll());
+    assert('__all__ → !isDraft', !APP.activeDeployment.isDraft());
+    assertEqual('all → Manage only',
+        APP.computeVisibleSubPills(APP.activeDeployment), ['manage']);
+
+    APP.activeDeployment.set('c2_adhoc_demo_01');
+    assert('existing → isExisting', APP.activeDeployment.isExisting());
+    assert('existing → !isDraft', !APP.activeDeployment.isDraft());
+    assert('existing → !isAll', !APP.activeDeployment.isAll());
+    assertEqual('existing → Manage + Bolt-ons',
+        APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'bolt-ons']);
+
+    // ----- Mode-switching: picking a real deployment clears draft -----
+    APP.activeDeployment.set('__draft__');
+    assert('mode-switch: in draft', APP.activeDeployment.isDraft());
+    APP.activeDeployment.set('some-project');
+    assert('mode-switch: picking real → not draft anymore', !APP.activeDeployment.isDraft());
+    assert('mode-switch: picking real → isExisting', APP.activeDeployment.isExisting());
+
+    // ----- Discard via set(null) -----
+    APP.activeDeployment.set('__draft__');
+    APP.activeDeployment.set(null);
+    assert('discard draft → current is null', APP.activeDeployment.current === null);
+    assert('discard draft → !isDraft', !APP.activeDeployment.isDraft());
+
+    // ----- URL hash parsing -----
+    assertEqual('parse empty hash', APP.parseDeploymentsHash(''), null);
+    assertEqual('parse non-deployments hash', APP.parseDeploymentsHash('#dashboard'), null);
+    assertEqual('parse bare deployments-tab',
+        APP.parseDeploymentsHash('#deployments-tab'),
+        { page: 'deployments', subPill: null, params: {} });
+    assertEqual('parse draft hash',
+        APP.parseDeploymentsHash('#deployments-tab/configure?draft=1'),
+        { page: 'deployments', subPill: 'configure', params: { draft: '1' } });
+    assertEqual('parse existing manage hash',
+        APP.parseDeploymentsHash('#deployments-tab/manage?project=myproj'),
+        { page: 'deployments', subPill: 'manage', params: { project: 'myproj' } });
+    assertEqual('parse all manage hash',
+        APP.parseDeploymentsHash('#deployments-tab/manage?project=__all__'),
+        { page: 'deployments', subPill: 'manage', params: { project: '__all__' } });
+    assertEqual('parse url-encoded project',
+        APP.parseDeploymentsHash('#deployments-tab/manage?project=my%20proj'),
+        { page: 'deployments', subPill: 'manage', params: { project: 'my proj' } });
+
+    // ----- Render results -----
+    const resultsDiv = document.getElementById('results');
+    let passed = 0, failed = 0;
+    results.forEach(r => {
+        const div = document.createElement('div');
+        div.className = 'test ' + (r.pass ? 'pass' : 'fail');
+        div.textContent = (r.pass ? 'PASS' : 'FAIL') + ' — ' + r.name + (r.detail ? ' [' + r.detail + ']' : '');
+        resultsDiv.appendChild(div);
+        if (r.pass) passed++; else failed++;
+    });
+    const summary = document.getElementById('summary');
+    summary.innerHTML = `<strong>Total:</strong> ${results.length} | <strong style="color:#6c6">Passed:</strong> ${passed} | <strong style="color:#f66">Failed:</strong> ${failed}`;
+    if (failed === 0) summary.style.color = '#6c6'; else summary.style.color = '#f66';
+
+    // Expose for headless test runners (e.g. Playwright)
+    window.__TEST_RESULTS__ = { total: results.length, passed, failed, results };
+</script>
+
+</body>
+</html>

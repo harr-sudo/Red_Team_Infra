@@ -1,0 +1,662 @@
+{
+  "c2-adhoc": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "c2-full": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "c2-purple": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "combined-adhoc-light": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "combined-adhoc-mini": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "combined-full-full": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      }
+    },
+    "keyPairDisabled": false
+  },
+  "goad-full": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      }
+    },
+    "keyPairDisabled": true
+  },
+  "goad-light": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      }
+    },
+    "keyPairDisabled": true
+  },
+  "goad-mini": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      }
+    },
+    "keyPairDisabled": true
+  },
+  "goad-nha": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      }
+    },
+    "keyPairDisabled": true
+  },
+  "goad-sccm": {
+    "sections": {
+      "deployment-overview": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "domain-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "ssl-config-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "domain-fronting-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "file-portal-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "attack-box-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "decoy-theme-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "malleable-profile-section": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "goad-network-config-section": {
+        "present": true,
+        "visible": true,
+        "displayed": true
+      },
+      "c2-server-count-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      },
+      "c2-instance-type-group": {
+        "present": true,
+        "visible": false,
+        "displayed": false
+      }
+    },
+    "keyPairDisabled": true
+  }
+}

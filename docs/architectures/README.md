@@ -1,0 +1,329 @@
+# Architecture Documentation Index
+
+## Overview
+
+This directory contains detailed architecture documentation for all deployment modes supported by the Red Team Infrastructure project. Each document includes diagrams, configurations, cost breakdowns, and operational guidance.
+
+**There are 12 deployment types:** 3 C2-only (`c2-adhoc`, `c2-purple`, `c2-full`), 5 GOAD-only (`goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha`), 3 combined C2+GOAD (`combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full`), and 1 self-contained CCRTS exam-mirror lab (`ccrts`).
+
+## Quick Navigation
+
+### GOAD Training Labs
+
+| Lab Type | VMs | Domains | Cost/Month | Best For | Documentation |
+|----------|-----|---------|------------|----------|---------------|
+| **GOAD Mini** | 1 DC | 1 | $75-100 | Beginners, learning AD basics | [📄 goad-mini.md](./goad-mini.md) |
+| **GOAD Light** | 2 DC + 1 SRV | 2 | $150-200 | Intermediate, multi-domain attacks | [📄 goad-light.md](./goad-light.md) |
+| **GOAD SCCM** | dc01 + srv01 + srv02 + ws01 | 1 | $180-230 | SCCM attack scenarios (sccm.lab) | |
+| **GOAD Full** | 3 DC + 2 SRV | 3 | $200-250 | Advanced, complete AD environment | [📄 goad-full.md](./goad-full.md) |
+| **GOAD NHA** | dc01-dc02 + srv01-srv03 | 2 | $200-250 | CTF challenge (ninja.hack) | |
+
+### C2 Infrastructure
+
+| Deployment Mode | Servers | Cost/Month | Best For | Documentation |
+|----------------|---------|------------|----------|---------------|
+| **C2 Ad-Hoc** | 1 C2 + 2 Redirectors + Attack Box | $160-192 | Quick pentests, POCs | [📄 c2-adhoc.md](./c2-adhoc.md) |
+| **C2 Purple Team** | 2 C2 + 2 Redirectors + Attack Box | $190-230 | Purple team exercises, redundancy | [📄 c2-purple.md](./c2-purple.md) |
+| **C2 Full Red Team** | 3 C2 (phases) + 2 Redirectors + Attack Box | $220-260 | Full red team, phase-based ops | [📄 c2-full.md](./c2-full.md) |
+
+**Optional add-on:** CloudFront Domain Fronting — hides redirector IPs behind CDN. Adds ~$10-50/month. See [C2 Traffic Flow](../C2_TRAFFIC_FLOW.md#domain-fronting-traffic-flow-optional).
+
+### Combined Deployments
+
+| Deployment | Components | Cost/Month | Best For | Documentation |
+|-----------|-----------|------------|----------|---------------|
+| **C2 + GOAD Mini** | Ad-Hoc C2 + GOAD Mini | $180-220 | Training with realistic C2 | [📄 combined-mini.md](./combined-mini.md) |
+| **C2 + GOAD Light** | Purple Team C2 + GOAD Light | $350-420 | Intermediate training | [📄 combined-light.md](./combined-light.md) |
+| **Full C2 + GOAD Full** | Full Red Team C2 + GOAD Full | $500-600 | Advanced training, full simulation | [📄 combined-full.md](./combined-full.md) |
+
+### CCRTS-Lab (CREST Exam Mirror)
+
+| Deployment | Components | Cost/Month | Best For | Documentation |
+|-----------|-----------|------------|----------|---------------|
+| **CCRTS** | Kali + Windows WS + DC + AD WS + ELK (own VPC, no C2) | ~$310 | Rehearsing the CREST CCRTS exam estate | [📄 CCRTS_LAB.md](../CCRTS_LAB.md) |
+
+`ccrts` is a **single, fully self-contained** deployment type — no size tiers, no combined/C2 variants. It runs in its own isolated VPC (`192.168.57.0/24`) reached only through the Dashboard Server.
+
+### Component Architecture
+
+| Component | Description | Documentation |
+|-----------|-------------|---------------|
+| **Dashboard Server** | Dedicated EC2 (t3.medium) in its own VPC (10.100.0.0/16), peers with every deployment VPC for direct management access | See per-deployment docs |
+| **Windows Attack Box** | Detailed breakdown of the Windows attack box with WSL2 | [📄 attackbox.md](./attackbox.md) |
+| **IAM Security** | Separate IAM roles per VPC with least privilege | [📄 iam-security.md](./iam-security.md) |
+| **SSH Key Management** | Automated SSH key distribution architecture | [📄 ssh-key-management.md](./ssh-key-management.md) |
+
+## Dashboard Server (Production Control Plane)
+
+The **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is a dedicated AWS-hosted instance in its own VPC. It is the **production control plane and sole SSH jump host** — the single operator entry point that all deployments branch out from. Every deployment VPC (C2 / GOAD / CCRTS) is peered with the Dashboard VPC, so the dashboard reaches every instance directly. The operator's laptop only runs a *dev* instance of the dashboard for development; production always runs on this AWS server. There is no per-deployment SSH-relay bastion; the GOAD jumpbox is retained only as the AD-lab Ansible provisioning host (not an access path).
+
+### Dashboard VPC
+
+| Property | Value |
+|----------|-------|
+| **VPC CIDR** | 10.100.0.0/16 |
+| **Subnet** | 10.100.1.0/24 |
+| **Instance** | t3.medium, Elastic IP |
+| **Services** | Flask web UI (:5000), SSH client to all peered instances |
+
+### VPC Peering
+
+The Dashboard VPC establishes a peering connection to **every deployment VPC** that is active:
+
+| Deployment Category | Deployment VPC CIDR | Peering |
+|--------------------|--------------------|---------|
+| C2 (ad-hoc, purple, full) | 10.0.0.0/16 | Dashboard VPC <-> C2 VPC |
+| GOAD (mini, light, sccm, full, nha) | 192.168.56.0/24 | Dashboard VPC <-> GOAD VPC |
+| Combined (C2 + GOAD) | Both CIDRs above | Dashboard peers with both VPCs |
+
+Through these peering connections the dashboard has **direct SSH access** (port 22) to every EC2 instance in the deployment, plus service-specific ports on team servers (CS/50050, REST/50443). Security groups on each instance allow inbound from the dashboard's security group or VPC CIDR.
+
+### Operator Workflow
+
+```
+Operator laptop
+   │ SSH tunnel (-L 5000:127.0.0.1:5000)
+   ▼
+Dashboard Server (10.100.1.10, EIP)
+   │ VPC Peering (direct routes)
+   ├──► C2 VPC instances (redirectors, team server, attack box)
+   └──► GOAD VPC instances (jumpbox, DCs, team server, attack box)
+```
+
+The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard is the sole management entry point that all deployments branch from — there is no per-deployment SSH-relay bastion. The GOAD jumpbox is reached *through* the dashboard and only provisions the AD lab via Ansible (it is not an access bastion).
+
+For deployment-specific details, see the "Dashboard Server (Production Control Plane)" section in each architecture document.
+
+## Architecture Diagrams
+
+All architecture diagrams are generated using AWS best practices and are located in:
+```
+/generated-diagrams/
+```
+
+### Available Diagrams
+
+- `goad-mini-architecture.png` - GOAD Mini deployment
+- `goad-light-architecture.png` - GOAD Light deployment
+- `goad-sccm-architecture.png` - GOAD SCCM deployment
+- `goad-nha-architecture.png` - GOAD NHA deployment
+- `goad-full-architecture.png` - GOAD Full deployment
+- `c2-adhoc-architecture.png` - C2 Ad-Hoc deployment
+- `c2-purple-architecture.png` - C2 Purple Team deployment
+- `c2-full-architecture.png` - C2 Full Red Team deployment
+- `combined-c2-goad-mini.png` - Combined C2 + GOAD Mini
+- `combined-full-c2-goad-light.png` - Combined Full deployment
+- `attackbox-architecture.png` - Windows Attack Box details
+- `iam-security-architecture.png` - IAM security model
+- `ssh-key-architecture.png` - SSH key management
+
+## Cost Comparison Matrix
+
+### GOAD-Only Deployments (Training Labs)
+
+| Lab | Monthly Cost (24/7) | Monthly Cost (Stop/Start 70% savings) | Daily Cost | Best Use Case |
+|-----|---------------------|----------------------------------------|------------|---------------|
+| Mini | $75-100 | $22-30 | $2.50-3.30 | Learning basics |
+| Light | $150-200 | $45-60 | $5-6.60 | Multi-domain practice |
+| SCCM | $180-230 | $54-69 | $6-7.60 | SCCM attack scenarios |
+| Full | $200-250 | $60-75 | $6.60-8.30 | Complete training |
+| NHA | $200-250 | $60-75 | $6.60-8.30 | Challenge mode (CTF) |
+
+### C2-Only Deployments (Infrastructure)
+
+| Mode | Monthly Cost | 2-Week Cost | Daily Cost | Best Use Case |
+|------|--------------|-------------|------------|---------------|
+| Ad-Hoc | $160-192 | $75-90 | $5-6.50 | Quick pentests |
+| Purple Team | $190-230 | $89-107 | $6-7.50 | Purple team exercises |
+| Full Red Team | $220-260 | $103-121 | $7-8.50 | Phase-based ops |
+
+### Combined Deployments (Full Simulation)
+
+| Deployment | Monthly Cost | Best Use Case |
+|-----------|--------------|---------------|
+| C2 Ad-Hoc + GOAD Mini | $180-220 | Training with realistic C2 |
+| C2 Purple + GOAD Light | $350-420 | Intermediate training |
+| C2 Full + GOAD Full | $500-600 | Advanced full simulation |
+
+## Decision Matrix
+
+### Choose GOAD Mini if:
+- ✅ New to Active Directory attacks
+- ✅ Budget under $100/month
+- ✅ Learning Kerberoasting, AS-REP Roasting basics
+- ✅ Don't need multi-domain environment
+
+### Choose GOAD Light if:
+- ✅ Understand AD basics
+- ✅ Need parent-child domain trusts
+- ✅ Want to practice lateral movement
+- ✅ Budget up to $250/month (or $75 with stop/start)
+
+### Choose GOAD Full if:
+- ✅ Advanced practitioner
+- ✅ Need multi-forest environment
+- ✅ Practicing enterprise-scale attacks
+- ✅ Budget $350-400/month
+
+### Choose C2 Ad-Hoc if:
+- ✅ Short engagement (1-2 weeks)
+- ✅ Single operator
+- ✅ Small target environment
+- ✅ Cost-sensitive
+
+### Choose C2 Purple Team if:
+- ✅ Need redundancy
+- ✅ Multiple operators
+- ✅ Purple team collaboration
+- ✅ Medium-term engagement (2-4 weeks)
+
+### Choose C2 Full Red Team if:
+- ✅ Long-term engagement (4+ weeks)
+- ✅ Need phase-based operations
+- ✅ Advanced OpSec requirements
+- ✅ Distributed infrastructure
+
+### Choose Combined Deployment if:
+- ✅ Need both lab and C2 infrastructure
+- ✅ Training with realistic attack scenarios
+- ✅ Testing C2 infrastructure against AD
+- ✅ Full red team simulation
+
+## Deployment Workflow
+
+### 1. Plan Your Deployment
+
+```mermaid
+graph TD
+    A[Start] --> B{What's your goal?}
+    B -->|Learn AD| C[Choose GOAD Lab]
+    B -->|Run engagement| D[Choose C2 Mode]
+    B -->|Training| E[Choose Combined]
+    C --> F{Experience level?}
+    F -->|Beginner| G[GOAD Mini]
+    F -->|Intermediate| H[GOAD Light]
+    F -->|Advanced| I[GOAD Full]
+    D --> J{Engagement length?}
+    J -->|1-2 weeks| K[C2 Ad-Hoc]
+    J -->|2-4 weeks| L[C2 Purple Team]
+    J -->|4+ weeks| M[C2 Full Red Team]
+    E --> N[Select combination based on needs]
+```
+
+### 2. Configure & Deploy
+
+1. **Via the Dashboard** (primary path)
+   ```bash
+   # Provision the AWS Dashboard Server once, then tunnel in:
+   ./scripts/server/setup-dashboard.sh
+   ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
+   # In the browser at http://localhost:5000:
+   #   Configuration → Select deployment type → Upload Cobalt Strike (if C2)
+   #   → Configure domain (if C2) → Deploy
+   ```
+   Terraform runs on the Dashboard Server using its IAM instance role; deployments branch out from it via VPC peering.
+
+2. **Via Command Line** (advanced / dev-only)
+   ```bash
+   cd terraform
+   terraform init
+   terraform apply -var="engagement_type=adhoc" -var="goad_lab_type=GOAD-Mini"
+   ```
+   The CLI path runs Terraform from your laptop and is intended for development/testing — the Dashboard Server is the production control plane.
+
+### 3. Access & Operate
+
+See individual architecture documents for specific access methods.
+
+### 4. Cleanup
+
+```bash
+# Stop instances (preserves data, saves 70% cost)
+./scripts/utilities/stop-infrastructure.sh
+
+# Or destroy completely
+terraform destroy
+```
+
+## Security Best Practices
+
+### Universal Security Guidelines
+
+1. **Network Security**
+   - ✅ Always restrict `management_cidr_blocks` to your IP
+   - ✅ Use SSH keys, never passwords
+   - ✅ Enable CloudWatch logging
+   - ✅ Review security group rules regularly
+
+2. **Access Control**
+   - ✅ Use IAM roles with least privilege
+   - ✅ Separate roles per VPC (C2 vs GOAD)
+   - ✅ Store secrets in AWS Secrets Manager
+   - ✅ Rotate credentials regularly
+
+3. **Cost Management**
+   - ✅ Stop instances when not in use
+   - ✅ Set up billing alerts
+   - ✅ Use tagging for cost tracking
+   - ✅ Destroy test deployments immediately
+
+4. **Operational Security**
+   - ✅ Use legitimate-looking domains
+   - ✅ Implement HTTPS with valid certs (Let's Encrypt or ACM with domain fronting)
+   - ✅ Avoid self-signed certs in production (flagged by Shodan/Censys, blocked by proxies)
+   - ✅ Consider domain fronting to hide redirector IPs from DNS analysis
+   - ✅ Randomize beacon sleep times
+   - ✅ Monitor for blue team detection
+   - ✅ Practice proper cleanup
+
+## Support & Troubleshooting
+
+### Common Issues
+
+| Issue | Likely Cause | Documentation |
+|-------|--------------|---------------|
+| Cannot connect to C2 | Security group misconfiguration | See C2 docs |
+| GOAD DC not responding | Domain promotion in progress | See GOAD docs |
+| High AWS costs | Forgot to stop instances | All docs |
+| Beacon won't call back | Redirector misconfiguration | C2 docs |
+| SSH key permission denied | Wrong permissions on key file | SSH key management doc |
+
+### Getting Help
+
+1. **Check documentation** for your specific deployment type
+2. **Review logs** in CloudWatch
+3. **Verify security groups** allow required traffic
+4. **Check terraform state** for resource status
+
+## Contributing
+
+To add new architecture documentation:
+
+1. Create diagram using AWS MCP diagram generator
+2. Save diagram to `/generated-diagrams/`
+3. Create markdown document in `/docs/architectures/`
+4. Update this index
+5. Update `architecture.js` to load new content
+
+## References
+
+### Official Documentation
+- [GOAD GitHub Repository](https://github.com/Orange-Cyberdefense/GOAD)
+- [Cobalt Strike Documentation](https://hstechdocs.helpsystems.com/manuals/cobaltstrike/)
+- [AWS Best Practices](https://aws.amazon.com/architecture/well-architected/)
+
+### Red Team Resources
+- [MITRE ATT&CK Framework](https://attack.mitre.org/)
+- [Active Directory Security](https://adsecurity.org/)
+- [Red Team Field Manual](https://github.com/tanc7/RTFM)
+
+### Network Infrastructure
+- [Cobalt Strike Infrastructure](https://blog.cobaltstrike.com/)
+- [Redirector Setup Guide](https://bluescreenofjeff.com/)
+- [Domain Fronting](https://www.bamsoftware.com/papers/fronting/)
+
+---
+
+**Last Updated**: January 2026
+**Maintained By**: Red Team Infrastructure Project
+**AWS MCP Diagrams**: Generated following AWS best practices

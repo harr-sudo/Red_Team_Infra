@@ -1,0 +1,12 @@
+---
+# testlab_member — handlers.
+
+- name: reboot member
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 90
+
+- name: restart iis
+  ansible.windows.win_service:
+    name: W3SVC
+    state: restarted

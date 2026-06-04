@@ -1,0 +1,29 @@
+---
+# Defaults for the testlab_member role.
+
+# IIS feature set — baseline web server; bolt-ons (PrintNightmare, ADCS
+# Web Enrollment ESC8) build on top of it.
+testlab_member_iis_features:
+  - Web-Server
+  - Web-Mgmt-Console
+  - Web-Common-Http
+  - Web-Default-Doc
+  - Web-Dir-Browsing
+  - Web-Http-Errors
+  - Web-Static-Content
+
+# SMB v1 server feature — installed but NOT enabled at the protocol
+# layer by default. The smb-signing-disabled bolt-on enables it.
+testlab_member_install_smb1: true
+
+# Baseline SMB share — writable by Authenticated Users (NOT Everyone).
+# The Writable-share descriptor authors a separate, properly-vulnerable
+# share — this one is just a sane default for the host to feel realistic.
+testlab_member_baseline_share_name: "public"
+testlab_member_baseline_share_path: 'C:\Shares\Public'
+
+# Office for the macro-doc-share bolt-on. We try winget first; if it
+# fails the role falls back to LibreOffice via Chocolatey, which is
+# enough for opening and dispatching a .docm payload.
+testlab_member_office_winget_id: "Microsoft.Office"
+testlab_member_libreoffice_choco_id: "libreoffice-fresh"

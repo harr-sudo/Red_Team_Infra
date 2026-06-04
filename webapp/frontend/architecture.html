@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infrastructure Architecture - Red Team Infrastructure</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Architecture page specific styles */
+        .architecture-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .architecture-header {
+            background: var(--burgundy);
+            color: var(--text-primary);
+            padding: 24px 30px;
+            border-radius: var(--radius-lg);
+            margin-bottom: 30px;
+            border: 1px solid var(--burgundy-light);
+        }
+
+        .architecture-header h1 {
+            margin: 0 0 8px 0;
+            font-size: 2em;
+            color: var(--gold);
+        }
+
+        .architecture-header p {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 1em;
+        }
+
+        .architecture-selector {
+            background: var(--bg-card);
+            padding: 20px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+
+        .architecture-selector label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--gold-muted);
+            font-size: 1.1em;
+        }
+
+        .architecture-selector select {
+            width: 100%;
+            padding: 12px;
+            font-size: 1em;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: border-color var(--transition);
+        }
+
+        .architecture-selector select:hover {
+            border-color: var(--gold-dim);
+        }
+
+        .architecture-selector select:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 2px rgba(163, 184, 122, 0.2);
+        }
+
+        .architecture-content {
+            background: var(--bg-card);
+            padding: 30px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            min-height: 400px;
+        }
+
+        /* Markdown content styling */
+        .markdown-content {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+        }
+
+        .markdown-content h1 {
+            color: var(--gold);
+            border-bottom: 2px solid var(--burgundy);
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        .markdown-content h2 {
+            color: var(--gold-muted);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            margin-top: 30px;
+        }
+
+        .markdown-content h3 {
+            color: var(--text-primary);
+            margin-top: 25px;
+        }
+
+        .markdown-content pre {
+            background: var(--bg-terminal);
+            color: var(--text-terminal);
+            padding: 20px;
+            border-radius: var(--radius);
+            overflow-x: auto;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+            border: 1px solid var(--border);
+        }
+
+        .markdown-content code {
+            background: var(--bg-body);
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.9em;
+            color: var(--gold-muted);
+        }
+
+        .markdown-content pre code {
+            background: transparent;
+            padding: 0;
+            color: var(--text-terminal);
+        }
+
+        .markdown-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        .markdown-content table th {
+            background: var(--burgundy-dark);
+            color: var(--gold);
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .markdown-content table td {
+            padding: 12px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .markdown-content table tr:nth-child(even) {
+            background: var(--bg-section);
+        }
+
+        .markdown-content table tr:hover {
+            background: var(--bg-elevated);
+        }
+
+        .markdown-content blockquote {
+            border-left: 3px solid var(--gold-dim);
+            padding-left: 20px;
+            margin-left: 0;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .markdown-content ul, .markdown-content ol {
+            padding-left: 25px;
+        }
+
+        .markdown-content li {
+            margin: 8px 0;
+            color: var(--text-secondary);
+        }
+
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+        }
+
+        .markdown-content hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 30px 0;
+        }
+
+        /* Info boxes */
+        .markdown-content .info-box {
+            background: var(--info-bg);
+            border-left: 3px solid var(--info);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: var(--radius-sm);
+        }
+
+        .markdown-content .warning-box {
+            background: var(--warning-bg);
+            border-left: 3px solid var(--warning);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: var(--radius-sm);
+        }
+
+        .markdown-content .success-box {
+            background: var(--success-bg);
+            border-left: 3px solid var(--success);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: var(--radius-sm);
+        }
+
+        /* Back button */
+        .back-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background: var(--burgundy);
+            color: var(--gold);
+            text-decoration: none;
+            border-radius: var(--radius);
+            margin-bottom: 20px;
+            transition: background var(--transition);
+            border: 1px solid var(--burgundy-light);
+        }
+
+        .back-button:hover {
+            background: var(--burgundy-light);
+            color: var(--gold);
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        /* Light mode — cream text on brand-colored backgrounds */
+        [data-theme="light"] .architecture-header {
+            color: #EFFBDB;
+        }
+        [data-theme="light"] .architecture-header h1 {
+            color: #EFFBDB;
+        }
+        [data-theme="light"] .architecture-header p {
+            color: rgba(239, 251, 219, 0.8);
+        }
+        [data-theme="light"] .markdown-content table th {
+            color: #EFFBDB;
+        }
+        [data-theme="light"] .back-button {
+            color: #EFFBDB;
+        }
+        [data-theme="light"] .back-button:hover {
+            color: #EFFBDB;
+        }
+    </style>
+</head>
+<body>
+    <div class="architecture-container">
+        <a href="index.html" class="back-button">Back to Dashboard</a>
+
+        <div class="architecture-header">
+            <h1>Infrastructure Architecture</h1>
+            <p>Detailed architecture diagrams and documentation for all deployment modes</p>
+        </div>
+
+        <div class="architecture-selector">
+            <label for="architecture-select">Select Deployment Architecture:</label>
+            <select id="architecture-select">
+                <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
+                    <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
+                    <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
+                    <option value="ssl-options">SSL/TLS Options Comparison</option>
+                    <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
+                    <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
+                </optgroup>
+                <optgroup label="GOAD Training Labs (with Cobalt Strike)">
+                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
+                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
+                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
+                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
+                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
+                </optgroup>
+                <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
+                    <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
+                    <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
+                    <option value="combined-full">Full C2 Red Team + GOAD Full</option>
+                </optgroup>
+                <optgroup label="Component Architecture (Technical Details)">
+                    <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
+                    <option value="iam-security">IAM Security - Roles & Permissions</option>
+                    <option value="ssh-key-management">SSH Key Management - Automation</option>
+                </optgroup>
+            </select>
+        </div>
+
+        <div class="architecture-content">
+            <div id="markdown-content" class="markdown-content">
+                <div class="loading">Loading architecture documentation</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Use marked.js for markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <script src="js/architecture.js"></script>
+</body>
+</html>

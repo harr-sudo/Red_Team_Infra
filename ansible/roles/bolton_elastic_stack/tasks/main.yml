@@ -1,0 +1,69 @@
+---
+# bolton_elastic_stack — entry task. Dispatches based on `state` and
+# `shipper_component` so a single role serves the stack descriptor AND
+# the three shipper descriptors.
+#
+# Branches:
+#   state == installed, shipper_component == ""           -> install full stack
+#   state == installed, shipper_component == winlogbeat   -> install Winlogbeat
+#   state == installed, shipper_component == filebeat     -> install Filebeat
+#   state == installed, shipper_component == sysmon       -> install Sysmon
+#   state == uninstalled                                  -> uninstall.yml branches on shipper_component
+
+- name: "bolton_elastic_stack | sanity-check inputs"
+  ansible.builtin.assert:
+    that:
+      - state in ['installed', 'uninstalled']
+      - shipper_component in ['', 'winlogbeat', 'filebeat', 'sysmon']
+    fail_msg: "Unsupported state/shipper_component combination: state={{ state }} shipper={{ shipper_component }}"
+
+# ── Install branches ──────────────────────────────────────────────────
+
+- name: "bolton_elastic_stack | install full stack"
+  ansible.builtin.include_tasks: install_es.yml
+  when:
+    - state == 'installed'
+    - shipper_component == ''
+
+- name: "bolton_elastic_stack | install Kibana (after ES)"
+  ansible.builtin.include_tasks: install_kibana.yml
+  when:
+    - state == 'installed'
+    - shipper_component == ''
+
+- name: "bolton_elastic_stack | install Fleet Server (after Kibana)"
+  ansible.builtin.include_tasks: install_fleet.yml
+  when:
+    - state == 'installed'
+    - shipper_component == ''
+
+- name: "bolton_elastic_stack | import detection rule corpus"
+  ansible.builtin.include_tasks: import_rules.yml
+  when:
+    - state == 'installed'
+    - shipper_component == ''
+
+# Shipper installs (currently scaffolded — Phase 3c will flesh them out).
+- name: "bolton_elastic_stack | install Winlogbeat"
+  ansible.builtin.include_tasks: install_winlogbeat.yml
+  when:
+    - state == 'installed'
+    - shipper_component == 'winlogbeat'
+
+- name: "bolton_elastic_stack | install Filebeat"
+  ansible.builtin.include_tasks: install_filebeat.yml
+  when:
+    - state == 'installed'
+    - shipper_component == 'filebeat'
+
+- name: "bolton_elastic_stack | install Sysmon"
+  ansible.builtin.include_tasks: install_sysmon.yml
+  when:
+    - state == 'installed'
+    - shipper_component == 'sysmon'
+
+# ── Uninstall ─────────────────────────────────────────────────────────
+
+- name: "bolton_elastic_stack | uninstall"
+  ansible.builtin.include_tasks: uninstall.yml
+  when: state == 'uninstalled'

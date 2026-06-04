@@ -1,0 +1,110 @@
+---
+# testlab_workstation — endpoint target build-out.
+#
+# Workstation domain-join already happened in testlab_join.yml.
+# This role only configures post-join state (apps, RSAT, macro
+# execution context). Idempotent.
+
+- name: "Test Lab Workstation | preflight — assert Windows client"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('Windows') == 'Windows'
+    fail_msg: "testlab_workstation only supports Windows client hosts."
+
+# --------------------------------------------------------------------
+# Base apps via winget. We tolerate winget failures (e.g. on a fresh
+# Win11 image before the App Installer self-updates) by setting
+# failed_when:false and reporting back through the verify task.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Workstation | detect winget availability"
+  ansible.windows.win_shell: |
+    if (Get-Command winget -ErrorAction SilentlyContinue) { 'present' } else { 'absent' }
+  register: testlab_ws_winget
+  changed_when: false
+
+- name: "Test Lab Workstation | install base apps via winget"
+  ansible.windows.win_shell: |
+    winget install --id {{ item }} --silent `
+                   --accept-source-agreements `
+                   --accept-package-agreements
+  loop: "{{ testlab_workstation_winget_apps }}"
+  register: testlab_ws_winget_install
+  changed_when: "'Successfully installed' in (testlab_ws_winget_install.stdout | default(''))"
+  failed_when: false
+  when: testlab_ws_winget.stdout is search('present')
+
+# --------------------------------------------------------------------
+# Local `ansible` admin — exists in addition to the domain `ansible`.
+# Same password as the domain account, but a distinct SAM entry so
+# credential-dumping bolt-ons have something to pull out of LSASS.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Workstation | ensure local `ansible` admin exists"
+  ansible.windows.win_user:
+    name: ansible
+    password: "{{ testlab_workstation_local_ansible_password }}"
+    password_never_expires: true
+    account_disabled: false
+    groups:
+      - Administrators
+      - Remote Management Users
+    groups_action: add
+    state: present
+    update_password: always
+  no_log: true
+
+# --------------------------------------------------------------------
+# Disable Windows Hello / PIN prompt — speeds up RDP demos and stops
+# the workstation throwing a passwordless-login wizard on first boot.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Workstation | disable Windows Hello convenience PIN sign-in"
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\System
+    name: AllowDomainPINLogon
+    data: 0
+    type: dword
+    state: present
+
+# --------------------------------------------------------------------
+# RSAT-AD-PowerShell — endpoint phishing bolt-ons pivot to AD from here.
+# On Win10/11 Pro this is an optional capability, installed via
+# Add-WindowsCapability.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Workstation | check if RSAT-AD-PowerShell capability is present"
+  ansible.windows.win_shell: |
+    (Get-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0').State
+  register: testlab_ws_rsat_state
+  changed_when: false
+
+- name: "Test Lab Workstation | install RSAT-AD-PowerShell capability"
+  ansible.windows.win_shell: |
+    Add-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0' | Out-Null
+  when: "'NotPresent' in (testlab_ws_rsat_state.stdout | default(''))"
+
+# --------------------------------------------------------------------
+# Office macro execution context — vulnerable BY DESIGN. The catalog
+# macro-doc-share descriptor relies on these registry keys to bypass
+# the "enable content" yellow bar.
+#
+# Policy path: HKCU\Software\Policies\Microsoft\Office\<ver>\<app>\Security
+# Value:        VBAWarnings   (DWORD)
+# 1 = Enable all macros (NOT RECOMMENDED IN PROD — LAB ONLY)
+# --------------------------------------------------------------------
+
+- name: "Test Lab Workstation | allow Office macros without prompt (lab only)"
+  ansible.windows.win_regedit:
+    path: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Office\\{{ ver }}\\{{ app | lower }}\\Security"
+    name: VBAWarnings
+    data: "{{ level }}"
+    type: dword
+    state: present
+  loop: "{{ testlab_workstation_office_versions | product(testlab_workstation_office_macro_levels | dict2items) | list }}"
+  loop_control:
+    label: "{{ item.0 }} / {{ item.1.key }}"
+  vars:
+    ver:   "{{ item.0 }}"
+    app:   "{{ item.1.key }}"
+    level: "{{ item.1.value }}"

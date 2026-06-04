@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: testlab_member
+  author: Red Team Infra
+  description: >-
+    Configures a Windows Server 2022 member of testlab.local as the
+    baseline target for the member-server family of bolt-ons
+    (PrintNightmare, Unconstrained-delegation-svc, Writable-share,
+    SMB-signing-disabled, Macro-doc-share). Installs IIS, ADCS Web
+    Enrollment, SMB v1 server (idle), a baseline non-vulnerable share,
+    and an Office / LibreOffice fallback.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions:
+        - "2019"
+        - "2022"
+  galaxy_tags:
+    - testlab
+    - member-server
+    - iis
+    - smb
+    - lab
+
+dependencies: []

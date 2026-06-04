@@ -1,0 +1,6 @@
+pytest>=7.4,<8
+pytest-mock>=3.12,<4
+moto[s3,ec2,iam,secretsmanager,route53,acm,dynamodb,cloudfront,sts]>=4.2,<5
+jsonschema>=4.20,<5
+freezegun>=1.4,<2
+flask>=3.0

@@ -1,0 +1,125 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+!terraform.tfvars.example
+!*.tfvars.example
+*.tfplan
+tfplan
+
+# Ansible
+*.retry
+.vault_pass
+ansible_vault_pass
+
+# AWS
+.aws/
+*.pem
+*.key
+
+# SSH
+id_rsa*
+*.ppk
+known_hosts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Web Application
+webapp/__pycache__/
+webapp/*.pyc
+webapp/.flaskenv
+
+# IDE
+.vscode/
+.idea/
+.obsidian/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Uploaded files (Cobalt Strike, etc.)
+uploads/
+*.tar.gz
+*.zip
+!*.example.*
+
+# Logs
+*.log
+logs/
+
+# Secrets
+secrets/
+*.secret
+.env
+.env.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Backup files
+*.bak
+*.backup
+
+# OS
+Thumbs.db
+.DS_Store
+
+# GOAD - Keep the tool but ignore generated files
+tools/goad/.terraform/
+tools/goad/workspace/
+tools/goad/workspaces/
+tools/goad/*.tfstate
+tools/goad/*.tfstate.*
+tools/goad/ad/*/providers/*/.terraform/
+tools/goad/ad/*/providers/*/terraform.tfstate*
+tools/goad/ad/*/providers/*/*.tfvars
+!tools/goad/ad/*/providers/*/*.tfvars.example
+tools/goad/packer/output/
+tools/goad/.vagrant/
+
+# Local-only files (not for remote)
+local-only/
+
+# Test framework (added by T0.1)
+node_modules/
+package-lock.json
+.pytest_cache/
+playwright-report/
+test-results/
+.vitest-cache/
+docs/cobalt-strike-api/spec.json
+
+# Bolt-on runtime state (job artifacts, host facts cache)
+webapp/state/
+
+# Local-only artifacts, agent/tool config, and scratch (never push)
+.claude/
+.mcp.json
+.c2lint_cache/
+*.rtf
+Research/
+goad_workspace/
+generated-diagrams/local-mode-backup/
+
+.firecrawl/
+webapp/frontend/preview/
+docs/legacy/
+
+# Local-only security follow-up notes (never pushed)

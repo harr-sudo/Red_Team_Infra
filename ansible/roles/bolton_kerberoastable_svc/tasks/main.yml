@@ -1,0 +1,66 @@
+---
+# bolton_kerberoastable_svc — INSTALL entrypoint.
+#
+# Creates an AD user account with a registered Service Principal Name and
+# a known-weak password, putting the host in a Kerberoastable state
+# (T1558.003). Dispatched by webapp/backend/services/bolton_install_service.py
+# when the action is `install`.
+#
+# Expects to run against a Windows domain controller with the AD PowerShell
+# module installed; the dispatcher's inventory provides WinRM connection
+# parameters.
+
+- name: "Bolton kerberoast | install | preflight — assert OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('Windows') == 'Windows'
+    fail_msg: "bolton_kerberoastable_svc only supports Windows domain controllers."
+    success_msg: "Windows host confirmed."
+
+- name: "Bolton kerberoast | install | create the weak service account"
+  community.windows.win_domain_user:
+    name: "{{ bolton_kerb_account_name }}"
+    password: "{{ bolton_kerb_weak_password }}"
+    password_never_expires: true
+    account_locked: false
+    description: "{{ bolton_kerb_account_description }}"
+    state: present
+    groups:
+      - "Domain Users"
+    groups_action: add
+    update_password: always
+    user_cannot_change_password: false
+  no_log: true
+
+- name: "Bolton kerberoast | install | register the SPN on the account"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Identity '{{ bolton_kerb_account_name }}' -Properties servicePrincipalName
+    $existing = @($u.servicePrincipalName)
+    if ($existing -notcontains '{{ bolton_kerb_spn }}') {
+      Set-ADUser -Identity '{{ bolton_kerb_account_name }}' `
+                 -ServicePrincipalNames @{Add='{{ bolton_kerb_spn }}'}
+    }
+  register: spn_register
+  changed_when: "'no SPN' not in (spn_register.stderr | default(''))"
+
+- name: "Bolton kerberoast | install | ensure RC4 stays enabled (vulnerable enc types)"
+  ansible.windows.win_shell: |
+    Set-ADUser -Identity '{{ bolton_kerb_account_name }}' -Replace @{
+      'msDS-SupportedEncryptionTypes' = {{ bolton_kerb_enctypes_vulnerable }}
+    }
+
+- name: "Bolton kerberoast | install | clear DOES_NOT_REQUIRE_PREAUTH (so kerberoasting works)"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Identity '{{ bolton_kerb_account_name }}' -Properties userAccountControl
+    $uac = [int]$u.userAccountControl
+    if (($uac -band 0x400000) -ne 0) {
+      $newUac = $uac -band (-bnot 0x400000)
+      Set-ADUser -Identity '{{ bolton_kerb_account_name }}' -Replace @{
+        userAccountControl = $newUac
+      }
+    }
+
+- name: "Bolton kerberoast | install | run verify probe"
+  ansible.builtin.import_tasks: verify.yml
+  vars:
+    bolton_kerb_verify_mode: install

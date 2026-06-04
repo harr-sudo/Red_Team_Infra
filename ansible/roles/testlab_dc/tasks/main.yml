@@ -1,0 +1,273 @@
+---
+# testlab_dc — promote to DC + install AD CS.
+#
+# Idempotent. Each module already knows when no work is needed:
+#   - win_feature is a no-op when the feature is already installed
+#   - win_domain returns changed=False when the forest already exists
+#   - win_domain_controller returns changed=False when this host is
+#     already a DC for the domain
+#   - win_powershell tasks gate on detection scripts before touching
+#     state (Install-AdcsCertificationAuthority is the canonical
+#     example — it throws if a CA is already configured, we catch and
+#     mark changed=False).
+
+- name: "Test Lab DC | preflight — assert Windows"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('Windows') == 'Windows'
+    fail_msg: "testlab_dc only supports Windows Server hosts."
+    success_msg: "Windows host confirmed."
+
+# --------------------------------------------------------------------
+# AD DS + DNS feature install
+# --------------------------------------------------------------------
+
+- name: "Test Lab DC | install AD-Domain-Services feature"
+  ansible.windows.win_feature:
+    name: AD-Domain-Services
+    state: present
+    include_management_tools: true
+  register: testlab_addsfeat
+
+- name: "Test Lab DC | install DNS feature"
+  ansible.windows.win_feature:
+    name: DNS
+    state: present
+    include_management_tools: true
+  register: testlab_dnsfeat
+
+- name: "Test Lab DC | install RSAT-AD-PowerShell"
+  ansible.windows.win_feature:
+    name: RSAT-AD-PowerShell
+    state: present
+
+# --------------------------------------------------------------------
+# Forest creation + DC promotion
+# --------------------------------------------------------------------
+
+- name: "Test Lab DC | create testlab.local forest if not present"
+  ansible.windows.win_domain:
+    dns_domain_name: "{{ domain_name }}"
+    domain_netbios_name: "{{ netbios_name }}"
+    safe_mode_password: "{{ domain_admin_password }}"
+    domain_mode: "{{ testlab_domain_mode }}"
+    forest_mode: "{{ testlab_forest_mode }}"
+    install_dns: true
+  register: testlab_forest
+  no_log: true
+
+- name: "Test Lab DC | reboot after forest creation"
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+    post_reboot_delay: 240
+  when: testlab_forest.reboot_required | default(false)
+
+- name: "Test Lab DC | ensure server is a DC for testlab.local"
+  ansible.windows.win_domain_controller:
+    dns_domain_name: "{{ domain_name }}"
+    domain_admin_user: "{{ netbios_name }}\\Administrator"
+    domain_admin_password: "{{ domain_admin_password }}"
+    safe_mode_password: "{{ domain_admin_password }}"
+    state: domain_controller
+  register: testlab_dcpromo
+  no_log: true
+
+- name: "Test Lab DC | reboot after DC promotion"
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+    post_reboot_delay: 240
+  when: testlab_dcpromo.reboot_required | default(false)
+
+- name: "Test Lab DC | wait for AD Web Services after reboot"
+  ansible.windows.win_service:
+    name: ADWS
+    state: started
+  register: testlab_adws
+  until: testlab_adws is succeeded
+  retries: 12
+  delay: 10
+
+# --------------------------------------------------------------------
+# AD CS — Enterprise Subordinate CA with NO default templates.
+#
+# We install the CA role first, then promote. Detection: if a CA
+# instance already exists in the registry, skip the Install-Adcs* call
+# and report changed=False. The promotion runs as EnterpriseSubordinateCA
+# but in the lab there is no separate root CA host — we satisfy the
+# subordinate request offline by importing a self-signed root cert into
+# the local trust store before promotion. This keeps the CA configured
+# as "Enterprise Subordinate" (which ESC1/ESC2 bolt-ons require for
+# template authoring against AD) without needing a 2nd Windows host.
+# --------------------------------------------------------------------
+
+- name: "Test Lab DC | install ADCS feature (AD-Certificate)"
+  ansible.windows.win_feature:
+    name: AD-Certificate
+    state: present
+    include_sub_features: true
+    include_management_tools: true
+  register: testlab_adcsfeat
+
+- name: "Test Lab DC | install ADCS-Cert-Authority sub-feature"
+  ansible.windows.win_feature:
+    name: ADCS-Cert-Authority
+    state: present
+    include_management_tools: true
+
+- name: "Test Lab DC | check if a CA is already configured (idempotency probe)"
+  ansible.windows.win_shell: |
+    $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration'
+    if (Test-Path $regPath) {
+        $active = (Get-ItemProperty $regPath).Active
+        if ($active) { Write-Output "ALREADY_CONFIGURED:$active" }
+    }
+  register: testlab_ca_state
+  changed_when: false
+
+- name: "Test Lab DC | bootstrap self-signed root cert for offline subordinate request"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String] $caCommonName)
+      # Generate an offline self-signed root that the EnterpriseSubordinate
+      # request can chain to. Stored in LocalMachine\Root so the CA install
+      # accepts the chain at submission time.
+      $existing = Get-ChildItem Cert:\LocalMachine\Root |
+                  Where-Object { $_.Subject -eq "CN=$caCommonName-Root" }
+      if (-not $existing) {
+        $cert = New-SelfSignedCertificate `
+          -Subject "CN=$caCommonName-Root" `
+          -CertStoreLocation Cert:\LocalMachine\My `
+          -KeyAlgorithm RSA -KeyLength 2048 `
+          -KeyUsage CertSign,CRLSign `
+          -KeyExportPolicy Exportable `
+          -NotAfter (Get-Date).AddYears(20) `
+          -HashAlgorithm SHA256 `
+          -TextExtension @("2.5.29.19={text}CA=1")
+        $bytes = $cert.Export('Cert')
+        $rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root','LocalMachine')
+        $rootStore.Open('ReadWrite')
+        $rootStore.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($bytes))
+        $rootStore.Close()
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      caCommonName: "{{ testlab_ca_common_name }}"
+  when: "'ALREADY_CONFIGURED' not in testlab_ca_state.stdout"
+
+- name: "Test Lab DC | promote CA as Enterprise Subordinate (no default templates)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param(
+        [String] $domainUsername,
+        [String] $domainPassword,
+        [String] $caCommonName,
+        [Int]    $keyLength,
+        [String] $hashAlg
+      )
+      $secure = ConvertTo-SecureString $domainPassword -AsPlainText -Force
+      $cred   = New-Object System.Management.Automation.PSCredential ($domainUsername, $secure)
+      try {
+        # EnterpriseSubordinateCA bootstrap. -OverwriteExistingKey false to
+        # avoid clobbering the bootstrap cert we just laid down. The
+        # subordinate request file is written to C:\ but never submitted
+        # to an external root — lab-only.
+        Install-AdcsCertificationAuthority `
+          -Credential $cred `
+          -CAType EnterpriseSubordinateCA `
+          -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+          -KeyLength $keyLength `
+          -HashAlgorithmName $hashAlg `
+          -CACommonName $caCommonName `
+          -OutputCertRequestFile "C:\Windows\Temp\$caCommonName.req" `
+          -Force | Out-Null
+        $Ansible.Changed = $true
+      } catch [Microsoft.CertificateServices.Deployment.Common.CertificateServicesBaseSetupException] {
+        # Already configured — treat as ok.
+        $Ansible.Changed = $false
+      } catch {
+        if ($_.Exception.Message -match 'is already installed') {
+          $Ansible.Changed = $false
+        } else {
+          throw
+        }
+      }
+    parameters:
+      domainUsername: "{{ netbios_name }}\\Administrator"
+      domainPassword: "{{ domain_admin_password }}"
+      caCommonName:   "{{ testlab_ca_common_name }}"
+      keyLength:      "{{ testlab_ca_key_length }}"
+      hashAlg:        "{{ testlab_ca_hash_algorithm }}"
+  no_log: true
+  when: "'ALREADY_CONFIGURED' not in testlab_ca_state.stdout"
+  notify: gpupdate
+
+- name: "Test Lab DC | strip default templates from the CA (clean canvas for ESC1/ESC2)"
+  ansible.windows.win_powershell:
+    script: |
+      # The default CA install publishes a set of templates (User,
+      # Administrator, Machine, DomainController, etc). For the bolt-on
+      # lab we want ZERO templates published so descriptors can author
+      # vulnerable ones from scratch. Unpublish each default.
+      $caName = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' -ErrorAction SilentlyContinue).Active
+      if (-not $caName) { return }
+      $defaults = @('User','Administrator','Machine','DomainController','WebServer','SubCA','EFS','BasicEFS')
+      $changed = $false
+      foreach ($t in $defaults) {
+        $output = certutil -setcatemplates -CA "+$t" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+          # Re-issue as a removal — certutil's only way of unpublishing
+          # is via the negative prefix.
+          certutil -setcatemplates "-$t" | Out-Null
+          $changed = $true
+        }
+      }
+      $Ansible.Changed = $changed
+  changed_when: false  # the script reports its own .Changed but certutil exits 0 even on no-op
+
+# --------------------------------------------------------------------
+# Baseline OU skeleton — flat, lab-only.
+# --------------------------------------------------------------------
+
+- name: "Test Lab DC | resolve domain DN base"
+  ansible.builtin.set_fact:
+    testlab_domain_dn: "{{ 'DC=' + domain_name.split('.') | join(',DC=') }}"
+
+- name: "Test Lab DC | create root OU"
+  community.windows.win_domain_ou:
+    name: "{{ testlab_ou_root }}"
+    path: "{{ testlab_domain_dn }}"
+    protected: true
+    state: present
+
+- name: "Test Lab DC | create child OUs under {{ testlab_ou_root }}"
+  community.windows.win_domain_ou:
+    name: "{{ item }}"
+    path: "OU={{ testlab_ou_root }},{{ testlab_domain_dn }}"
+    protected: false
+    state: present
+  loop: "{{ testlab_ou_children }}"
+
+# --------------------------------------------------------------------
+# Long-lived `ansible` domain admin — bolt-ons connect via this account.
+# --------------------------------------------------------------------
+
+- name: "Test Lab DC | create `ansible` domain user (Domain Admin)"
+  community.windows.win_domain_user:
+    name: "{{ testlab_domain_ansible_user }}"
+    password: "{{ testlab_domain_ansible_password }}"
+    password_never_expires: true
+    account_locked: false
+    description: "Long-lived bolt-on dispatcher account. Lab-only."
+    state: present
+    groups:
+      - "Domain Admins"
+      - "Enterprise Admins"
+      - "Schema Admins"
+    groups_action: add
+    update_password: on_create
+    path: "OU=Users,OU={{ testlab_ou_root }},{{ testlab_domain_dn }}"
+  no_log: true

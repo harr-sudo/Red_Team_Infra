@@ -1,0 +1,27 @@
+---
+# Defaults for the testlab_linux role.
+
+# APT packages installed alongside docker.io. Kept minimal — bolt-ons
+# pull in whatever else they need.
+testlab_linux_apt_packages:
+  - docker.io
+  - docker-compose
+  - ufw
+  - curl
+  - jq
+
+# Image pre-pulled so the daemon has something to test against and
+# so dvwa-lite has a base layer cached.
+testlab_linux_base_image: "docker.io/library/alpine:3.19"
+
+# Internal interface on the test-lab VPC. Used by ufw to scope the
+# Docker daemon rule. On Ubuntu 22 the default ENI name on EC2 is
+# ens5; the terraform module honours that.
+testlab_linux_internal_iface: "ens5"
+
+# Ports the host listens on by default:
+#   - 22   : SSH (bastion + jumpbox)
+#   - 2375 : Docker daemon (LOCAL ONLY — exposed-socket bolt-on flips
+#            this to network later). Closed at the firewall by default.
+testlab_linux_ufw_allow_ssh: true
+testlab_linux_ufw_allow_docker: false

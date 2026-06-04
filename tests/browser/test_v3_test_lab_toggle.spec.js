@@ -1,0 +1,171 @@
+/**
+ * 2026-05-20 — Configure V2 · Test Lab toggle.
+ *
+ * Covers:
+ *   1. Test Lab section visible only for the c2 family (hidden for goad-*
+ *      and combined-*).
+ *   2. Toggling the checkbox reveals the inline subnet/help fields AND
+ *      injects the 4 test-lab line items into the cost table.
+ *   3. assembleConfig() emits enable_test_lab=true + test_lab_subnet_cidr
+ *      when the toggle is on, even after a Save round-trip.
+ *   4. Switching family from c2 → goad force-clears the toggle so a stale
+ *      value can never leak into a non-c2 deployment.
+ *
+ * Spec: docs/internal/TESTLAB_DESIGN.md
+ */
+
+import { test, expect } from '@playwright/test';
+
+async function openDraftConfigure(page) {
+    await page.goto('/');
+    await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
+    await page.evaluate(() => { window.confirm = () => true; });
+    await page.click('#global-new-deployment-btn');
+    await page.waitForTimeout(400);
+    // Ensure the V2 surface is mounted.
+    await page.locator('#configure-v2-pane').waitFor({ timeout: 5000 });
+    // Force-init in case applyDraftMode hasn't fired yet
+    await page.evaluate(() => {
+        if (window.APP && window.APP.configureV2 && window.APP.configureV2.ensureInitialized) {
+            return window.APP.configureV2.ensureInitialized();
+        }
+    });
+    await page.waitForTimeout(300);
+}
+
+async function pickFamily(page, family) {
+    // Family buttons live at #cfg-family-row; data-cfg-family carries 'c2'/'goad'/'combined'.
+    // When Identity is confirmed the body collapses and the family buttons
+    // are not pointer-clickable — re-open via the chip-row pencil first.
+    await page.evaluate(() => {
+        const sec = document.querySelector('.cfg-section[data-cfg-section="identity"]');
+        if (sec && sec.classList.contains('is-confirmed')) {
+            const editBtn = document.getElementById('cfg-identity-edit-btn');
+            if (editBtn) editBtn.click();
+        }
+    });
+    await page.click(`#cfg-family-row [data-cfg-family="${family}"]`);
+    // Wait for applyTypeAwareVisibility() — it runs synchronously off the
+    // click handler, but the section's `.is-hidden` class observation needs
+    // a microtask cycle to settle in Playwright.
+    await page.waitForTimeout(400);
+}
+
+// 2026-05-20 (Batch C) — `.cfg-section.is-pending` collapses its body via
+// `grid-template-rows: 0fr` so the checkbox inside is unclickable until the
+// state machine advances. For tests that just exercise the test-lab toggle
+// (not the state machine itself), force every section to `is-active` so the
+// inputs are reachable. This is a test-only escape hatch; production keeps
+// the progressive reveal.
+async function unlockAllSections(page) {
+    await page.evaluate(() => {
+        document.querySelectorAll('.cfg-section').forEach(s => {
+            s.classList.remove('is-pending', 'is-confirmed');
+            s.classList.add('is-active');
+        });
+    });
+    await page.waitForTimeout(80);
+}
+
+// Click the test-lab checkbox in a way that survives the section being in
+// `.is-pending` state (which intercepts pointer events). The bound change
+// handler is what calls updateTestLabVisibility() — toggling .checked alone
+// is not enough.
+async function toggleTestLab(page) {
+    await page.evaluate(() => {
+        const cb = document.getElementById('cfg-enable-test-lab');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForTimeout(80);
+}
+
+test('Test Lab section visible for c2-* family', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+    const section = page.locator('.cfg-section[data-cfg-section="testlab"]');
+    await expect(section).toBeVisible();
+    // The rail item is also visible
+    const rail = page.locator('.cfg-rail__item[data-cfg-section-id="testlab"]');
+    await expect(rail).toBeVisible();
+});
+
+test('Test Lab section hidden for goad-* family', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'goad');
+    const section = page.locator('.cfg-section[data-cfg-section="testlab"]');
+    await expect(section).toHaveClass(/is-hidden/);
+    const rail = page.locator('.cfg-rail__item[data-cfg-section-id="testlab"]');
+    await expect(rail).toHaveClass(/is-hidden/);
+});
+
+// 2026-05-20 (UX audit Batch B · C6) — Test Lab is now ALSO available for
+// combined-* deployments. The combined family has both GOAD AND a C2,
+// and the test lab is an additional purpose-built lab for catalog
+// validation that sits next to (not in lieu of) GOAD.
+test('Test Lab section visible for combined-* family + shows explainer note', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'combined');
+    const section = page.locator('.cfg-section[data-cfg-section="testlab"]');
+    await expect(section).toBeVisible();
+    const combinedNote = page.locator('#cfg-test-lab-combined-note');
+    await expect(combinedNote).toBeVisible();
+    await expect(combinedNote).toContainText('Combined deployments already include a GOAD lab');
+});
+
+test('Toggle reveals subnet field + updates cost table', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+    await unlockAllSections(page);
+
+    const fields = page.locator('#cfg-test-lab-fields');
+    await expect(fields).toBeHidden();
+
+    // Cost table baseline — sum the visible rows. We just verify the row
+    // count grows by 4 after the toggle flips on.
+    const beforeRows = await page.locator('#cfg-cost-body tr').count();
+
+    await toggleTestLab(page);
+    await expect(fields).toBeVisible();
+
+    const subnet = page.locator('#cfg-test-lab-subnet-cidr');
+    await expect(subnet).toBeVisible();
+    expect((await subnet.inputValue())).toBe('10.0.20.0/24');
+
+    const afterRows = await page.locator('#cfg-cost-body tr').count();
+    expect(afterRows - beforeRows).toBeGreaterThanOrEqual(4);
+
+    // Toggle off — fields hide, row count returns to baseline.
+    await toggleTestLab(page);
+    await expect(fields).toBeHidden();
+    const offRows = await page.locator('#cfg-cost-body tr').count();
+    expect(offRows).toBe(beforeRows);
+});
+
+test('assembleConfig() writes enable_test_lab=true + subnet cidr', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+    await unlockAllSections(page);
+    await toggleTestLab(page);
+
+    const config = await page.evaluate(() => window.APP.configureV2.assembleConfig());
+    expect(config.enable_test_lab).toBe(true);
+    expect(config.test_lab_subnet_cidr).toBe('10.0.20.0/24');
+});
+
+test('Family switch c2 → goad force-clears the test lab toggle', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+    await unlockAllSections(page);
+    await toggleTestLab(page);
+    await expect(page.locator('#cfg-test-lab-fields')).toBeVisible();
+
+    await pickFamily(page, 'goad');
+    // The toggle must be unchecked AND the assemble output must reflect that.
+    const isChecked = await page.locator('#cfg-enable-test-lab').isChecked();
+    expect(isChecked).toBe(false);
+
+    const config = await page.evaluate(() => window.APP.configureV2.assembleConfig());
+    expect(config.enable_test_lab).toBe(false);
+});

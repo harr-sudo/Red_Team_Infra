@@ -1,0 +1,35 @@
+######################
+# bolton_elastic_stack
+# Single-node Elasticsearch for Phase 3b detection lab.
+# Rendered by ansible/roles/bolton_elastic_stack/tasks/install_es.yml
+######################
+
+cluster.name: bolton-detection-lab
+node.name: {{ ansible_hostname | default('es-node-1') }}
+node.roles: [ master, data, ingest, transform ]
+
+path.data: {{ elastic_data_dir }}
+path.logs: /var/log/elasticsearch
+
+network.host: 0.0.0.0
+http.port: {{ elasticsearch_port }}
+transport.port: 9300
+
+discovery.type: single-node
+
+# Security — enrolled at install time via elasticsearch-reset-password.
+xpack.security.enabled: true
+xpack.security.enrollment.enabled: true
+
+xpack.security.http.ssl:
+  enabled: true
+  keystore.path: certs/http.p12
+
+xpack.security.transport.ssl:
+  enabled: true
+  verification_mode: certificate
+  keystore.path: certs/transport.p12
+  truststore.path: certs/transport.p12
+
+# Resource caps — keep the t3.large host responsive even when ES is loaded.
+indices.memory.index_buffer_size: 20%

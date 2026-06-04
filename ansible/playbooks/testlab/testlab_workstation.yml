@@ -1,0 +1,14 @@
+---
+# Test Lab — Phase 5: workstation build-out (tlws01).
+#
+# Installs a small set of operator-recognizable apps, RSAT-AD-PowerShell
+# (so endpoint-phishing bolt-ons can pivot directly against AD from the
+# workstation), and configures Office macros to run without prompt
+# (vulnerable BY DESIGN — this is a lab).
+
+- name: "Test Lab | workstation | configure tlws01"
+  hosts: workstations
+  gather_facts: true
+  roles:
+    - role: testlab_workstation
+      tags: ['testlab_workstation']

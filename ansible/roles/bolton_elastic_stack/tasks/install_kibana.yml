@@ -1,0 +1,68 @@
+---
+# Install + configure Kibana, point it at the local Elasticsearch, and
+# generate an enrollment token that Fleet Server will consume in the
+# next task.
+
+- name: "install_kibana | install Kibana package"
+  ansible.builtin.apt:
+    name: "kibana={{ es_version }}"
+    state: present
+    update_cache: true
+  become: true
+
+- name: "install_kibana | render kibana.yml"
+  ansible.builtin.template:
+    src: "kibana.yml.j2"
+    dest: "/etc/kibana/kibana.yml"
+    owner: root
+    group: kibana
+    mode: "0640"
+  become: true
+  notify: restart kibana
+
+- name: "install_kibana | flush handlers so Kibana restarts before the wait"
+  ansible.builtin.meta: flush_handlers
+
+- name: "install_kibana | enable + start Kibana service"
+  ansible.builtin.systemd:
+    name: kibana
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true
+
+- name: "install_kibana | wait for Kibana HTTP to respond"
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/status"
+    user: "elastic"
+    password: "{{ es_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: [200, 401, 503]
+  register: _kibana_status
+  until: _kibana_status.status in [200, 401]
+  retries: 30
+  delay: 10
+
+- name: "install_kibana | discover host's reachable address"
+  ansible.builtin.set_fact:
+    _kibana_host_address: "{{ ansible_default_ipv4.address | default(ansible_host | default('127.0.0.1')) }}"
+
+- name: "install_kibana | register kibana_endpoint as a host fact"
+  ansible.builtin.set_fact:
+    kibana_endpoint: "{{ _kibana_host_address }}:{{ kibana_port }}"
+    cacheable: true
+
+- name: "install_kibana | persist endpoint to /etc/bolton/elastic-stack.facts"
+  ansible.builtin.copy:
+    dest: "/etc/bolton/elastic-stack.facts"
+    content: |
+      kibana_endpoint={{ _kibana_host_address }}:{{ kibana_port }}
+      elasticsearch_endpoint={{ _kibana_host_address }}:{{ elasticsearch_port }}
+      fleet_endpoint={{ _kibana_host_address }}:{{ fleet_port }}
+      es_user=elastic
+      # Password is NOT written here; it lives in AWS Secrets Manager.
+    owner: root
+    group: root
+    mode: "0644"
+  become: true

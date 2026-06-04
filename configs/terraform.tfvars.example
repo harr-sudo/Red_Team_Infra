@@ -1,0 +1,260 @@
+# Red Team Infrastructure - Terraform Variables Configuration
+# Copy this file to terraform.tfvars and customize with your values
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+aws_region = "eu-central-1"
+aws_profile = "default"  # Optional: AWS CLI profile name
+
+# =============================================================================
+# Project Configuration
+# =============================================================================
+project_name = "red-team-infra"
+environment = "dev"  # Options: dev, staging, prod
+
+# Engagement Type (auto-configures deployment mode)
+# Options: "adhoc", "purple-team", "full-red-team"
+#   - "adhoc": One-off tests → deploys single C2 server
+#   - "purple-team": Purple team exercises → deploys redundancy mode (2+ servers)
+#   - "full-red-team": Full red team engagement → deploys phases mode (one per phase)
+# Leave empty to manually configure c2_deployment_mode
+engagement_type = ""  # Options: adhoc, purple-team, full-red-team
+
+# =============================================================================
+# VPC Configuration
+# =============================================================================
+vpc_cidr = "10.0.0.0/16"
+availability_zones = ["eu-central-1a", "eu-central-1b"]
+
+# Public Subnets (for proxy/redirector servers)
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+
+# Private Subnets (for C2 team servers)
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+# NAT Gateway (optional - for private subnet internet access)
+enable_nat_gateway = false  # Set to true if C2 servers need outbound internet
+
+# =============================================================================
+# Security Configuration
+# =============================================================================
+# Management CIDR blocks - RESTRICT TO YOUR IP ADDRESSES!
+# Example: ["YOUR.IP.ADDRESS/32", "OFFICE.IP.RANGE/24"]
+management_cidr_blocks = ["203.0.113.10/32"]  # ⚠️ REPLACE with your operator IP(s). 0.0.0.0/0 and ::/0 are rejected by variable validation.
+
+ssh_port = 22
+c2_server_port = 50050  # Port used by C2 team servers
+
+# =============================================================================
+# Key Pair Configuration
+# =============================================================================
+key_pair_name = "red-team-keypair"  # Must exist in AWS
+
+# =============================================================================
+# C2 Team Server Configuration
+# =============================================================================
+# Deployment Mode: "single", "redundancy", or "phases"
+#   - "single": Deploy 1 C2 server (simple setup)
+#   - "redundancy": Deploy multiple C2 servers (default: 2, configurable)
+#   - "phases": Deploy one server per engagement phase (staging, post-ex, long-haul)
+# 
+# NOTE: If engagement_type is set above, this will be auto-configured.
+# Leave empty ("") to use engagement_type, or set explicitly to override.
+c2_deployment_mode = ""  # Options: single, redundancy, phases, or "" (auto from engagement_type)
+
+# Configuration for Single/Redundancy Modes
+c2_server_count = 2  # Number of C2 team servers (used for redundancy mode, ignored for single/phases)
+c2_server_instance_type = "t3.medium"  # Options: t3.small, t3.medium, t3.large, etc.
+c2_server_ami_id = ""  # Leave empty to use latest Amazon Linux 2
+c2_server_root_volume_size = 20  # GB
+c2_server_enable_elastic_ips = false  # Typically not needed in private subnets
+c2_server_iam_instance_profile_name = ""  # Optional: IAM role for C2 servers
+c2_server_user_data = ""  # Optional: User data script for C2 server setup
+
+# Phase-Based Configuration (used when c2_deployment_mode = "phases")
+# Each phase can have its own instance type, volume size, and user data
+c2_phases = {
+  staging = {
+    enabled          = true   # Set to false to disable this phase
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""      # Optional: Phase-specific setup script
+    iam_instance_profile_name = ""  # Optional: Phase-specific IAM role
+  }
+  post-ex = {
+    enabled          = true
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""
+    iam_instance_profile_name = ""
+  }
+  long-haul = {
+    enabled          = true
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""
+    iam_instance_profile_name = ""
+  }
+}
+
+# =============================================================================
+# Proxy/Redirector Configuration
+# =============================================================================
+proxy_redirector_count = 2  # Number of proxy/redirector instances
+proxy_redirector_instance_type = "t3.small"  # Smaller instances for pass-through
+proxy_redirector_ami_id = ""  # Leave empty to use latest Amazon Linux 2
+proxy_redirector_root_volume_size = 8  # GB (minimal - pass-through only, no data storage)
+proxy_redirector_iam_instance_profile_name = ""  # Optional: IAM role for proxies
+proxy_redirector_user_data = ""  # Optional: User data script for proxy configuration
+
+# Decoy Website Theme
+# 'plexura'            = Plexura Managed Solutions (SaaS company, blocks crawlers)
+# 'meridian-financial' = Meridian Financial Group (financial advisory, allows crawlers for categorization)
+decoy_theme = "plexura"
+
+# =============================================================================
+# SSH Jump Access
+# =============================================================================
+# There is NO per-deployment bastion. The AWS-hosted Dashboard Server is the
+# sole SSH jump into private subnets (C2 servers, redirectors, attack box). It
+# already has direct ingress to those hosts via its security group. Operators
+# tunnel through the dashboard EIP, e.g.:
+#   ssh -L 50050:<c2_private_ip>:50050 ubuntu@<dashboard-eip>   # CS client
+#   ssh -L 13389:<attackbox_ip>:3389  ubuntu@<dashboard-eip>   # attack box RDP
+
+# =============================================================================
+# Tools Repository Configuration (Jump Box Only)
+# =============================================================================
+# Tools repository will be cloned to jump box at C:\Tools\ (Windows) and /opt/tools/ (WSL2)
+# Operators can access tools via RDP/SSH to jump box
+# See docs/TOOLS_REPOSITORY_SETUP.md for complete setup instructions
+#
+# IMPORTANT: Create the repository first using:
+#   gh repo create red-team-tools --private
+# Then update the URL below with your actual repository URL
+tools_repo_url = "https://github.com/harr-sudo/red-team-tools.git"  # Repository URL (use HTTPS for PAT authentication)
+tools_repo_branch = "main"  # Branch to clone
+tools_repo_ssh_key = ""  # SSH private key stored in AWS SSM Parameter Store (e.g., "/red-team/tools-repo-ssh-key")
+# OR for HTTPS authentication:
+tools_repo_https_token = ""  # GitHub PAT (e.g., "ghp_xxxx") -- Terraform stores in AWS Secrets Manager automatically
+# Note: Use either SSH key OR HTTPS token, not both
+# HTTPS tokens are stored in Secrets Manager and fetched by instances at runtime via IAM role
+
+# Cobalt Strike License Key (auto-activated from Secrets Manager)
+# Store your license key ONCE in Secrets Manager:
+#   aws secretsmanager create-secret --name cs-license-key --secret-string "xxxx-xxxx-xxxx-xxxx" --region eu-central-1
+# Team servers fetch the key at boot and activate automatically.
+# Default: "cs-license-key". Set to "" for manual activation.
+cobalt_strike_license_secret_name = "cs-license-key"
+
+# Cobalt Strike REST API (requires CS 4.12+)
+# Enables --experimental-db on team server and starts csrestapi service on port 50443.
+# Required for beacon management via the web dashboard.
+enable_cs_rest_api = false
+
+# =============================================================================
+# Monitoring Configuration
+# =============================================================================
+enable_detailed_monitoring = false  # Enable detailed CloudWatch monitoring (costs extra)
+
+# =============================================================================
+# Terraform Backend Configuration (Optional but Recommended)
+# =============================================================================
+# Uncomment and configure if using S3 backend for state storage
+# terraform_backend_bucket = "red-team-terraform-state"
+# terraform_backend_region = "eu-central-1"
+# terraform_backend_key = "terraform.tfstate"
+# terraform_backend_dynamodb_table = "terraform-state-lock"
+
+# =============================================================================
+# Tags
+# =============================================================================
+tags = {
+  Project        = "RedTeamInfra"
+  Environment    = "dev"
+  ManagedBy      = "Terraform"
+  Owner          = "RedTeam"
+  Purpose        = "C2Infrastructure"
+  EngagementType = ""  # Will be set from engagement_type variable if provided
+}
+
+# =============================================================================
+# Ansible Configuration (for reference - not used by Terraform)
+# =============================================================================
+# ansible_user = "ec2-user"  # ec2-user for Amazon Linux, ubuntu for Ubuntu
+
+# =============================================================================
+# Domain Configuration (REQUIRED for CDN/Domain Fronting)
+# =============================================================================
+# ⚠️ IMPORTANT: Register domains BEFORE infrastructure deployment!
+# See docs/DOMAIN_REQUIREMENTS.md for detailed domain setup guide
+
+# Primary Domain
+primary_domain_name = ""  # e.g., "example-business-services.com"
+primary_domain_hosted_zone_id = ""  # Route53 hosted zone ID (leave empty if not using Route53)
+
+# Backup Domains (REQUIRED - minimum 2-3 for redundancy)
+# Format: List of objects with domain_name and hosted_zone_id
+backup_domains = [
+  # {
+  #   domain_name = "backup-domain-1.com"
+  #   hosted_zone_id = ""
+  # },
+  # {
+  #   domain_name = "backup-domain-2.net"
+  #   hosted_zone_id = ""
+  # }
+]
+
+# Subdomain Configuration
+c2_subdomain = "api"  # Subdomain for beacon callbacks (avoid obvious names like "c2")
+www_subdomain = "www"  # Subdomain for public-facing (domain fronting)
+cdn_subdomain = "cdn"  # Subdomain for CDN endpoint
+
+# DNS Configuration
+dns_provider = "route53"  # Options: route53, cloudflare, external
+enable_dns_validation = true  # Enable DNS validation for ACM certificates
+
+# =============================================================================
+# File Portal Configuration (Optional)
+# =============================================================================
+# Deploys a secure file sharing portal on redirectors at /login
+# NOTE: When enabled, increase proxy_redirector_root_volume_size to at least 20 (GB)
+# enable_file_portal    = false
+# portal_username       = "operator"
+# portal_password       = "YourSecurePassword123"
+# portal_session_timeout = 30
+
+# =============================================================================
+# CCRTS Lab Configuration (CREST exam-mirror lab)
+# =============================================================================
+# Set deployment_type = "ccrts" for the self-contained CREST exam-mirror lab.
+# This is one fully-isolated configuration (aligned to upstream
+# spark42/ccrts-lab): it ALWAYS provisions all 5 hosts — Kali (.20),
+# Windows ws (.30), AD DC dc01 (.40, ccrts.local), AD ws ad-ws01 (.41), and
+# ELK (.50). There are no size tiers and no C2 integration / VPC peering.
+#
+# deployment_type = "ccrts"
+#
+# CREST Community AMIs (owner 126620636130) are published in eu-west-2 only.
+# A second AWS provider alias reads the latest AMI IDs and aws_ami_copy moves
+# the underlying snapshots into eu-central-1. NO infrastructure is provisioned
+# in eu-west-2 — only metadata reads + storage-layer snapshot copies.
+#
+# Operator access flows ONLY through the dashboard server — the lab hosts have
+# no inbound internet exposure, and the lab VPC is not peered to the C2 VPC.
+#
+# ccrts_vpc_cidr            = "192.168.57.0/24"
+# ccrts_public_subnet_cidr  = "192.168.57.64/26"
+# ccrts_private_subnet_cidr = "192.168.57.0/26"
+#
+# # Optional: skip the cross-region aws_ami_copy by supplying a pre-staged AMI
+# # in the deploy region (e.g. you've already copied them once for an earlier
+# # run and want to save the snapshot transfer time).
+# # crest_kali_ami_override    = ""
+# # crest_windows_ami_override = ""
+#
+# # Lab credentials (weak by design — CCRTS exam-mirror)
+# # ccrts_dc_admin_password = "P@ssw0rd1!"
+# # ccrts_low_priv_password = "Welcome1!"

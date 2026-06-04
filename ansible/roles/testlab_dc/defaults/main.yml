@@ -1,0 +1,43 @@
+---
+# Defaults for the testlab_dc role.
+#
+# These mirror the inventory group-vars the dashboard endpoint writes
+# to /home/ubuntu/test_lab/inventory.yml. Anything the caller does not
+# override falls back to these values.
+
+# Forest / domain identity.
+domain_name: testlab.local
+netbios_name: TESTLAB
+
+# Forest functional level — 2016 is the minimum that some bolt-ons
+# (LAPS encrypted attribute, AdminSDHolder modern attributes) expect.
+testlab_forest_mode: "WinThreshold"   # WinThreshold == 2016 functional level
+testlab_domain_mode: "WinThreshold"
+
+# Domain admin / DSRM password. Pulled from ansible-vault by the
+# dashboard inventory generator.
+domain_admin_password: "{{ vault_domain_admin_password }}"
+
+# AD CS — installed as an Enterprise Subordinate CA. We deliberately
+# bootstrap it as a self-signed root for the lab (see role README) so
+# we don't need a separate root CA host. Templates are intentionally
+# NOT auto-published — ESC1/ESC2 bolt-ons author them.
+testlab_ca_common_name: "TESTLAB-CA"
+testlab_ca_key_length: 2048
+testlab_ca_hash_algorithm: "SHA256"
+testlab_ca_validity_years: 10
+testlab_ca_install_web_enrollment: false   # member server owns Web Enroll
+
+# Baseline OU skeleton — bolt-ons drop accounts here.
+testlab_ou_root: "Test Lab"
+testlab_ou_children:
+  - "Users"
+  - "Computers"
+  - "Servers"
+  - "Workstations"
+
+# Domain `ansible` user — the long-lived service account bolt-ons use
+# to attach via WinRM. Equivalent to Domain Admin so it can author
+# templates / users / GPOs without elevation.
+testlab_domain_ansible_user: "ansible"
+testlab_domain_ansible_password: "{{ vault_ansible_password }}"

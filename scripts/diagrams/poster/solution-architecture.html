@@ -1,0 +1,263 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{
+    --ink:#10121b; --muted:#5a6472; --line:#cfd6e0;
+    --cp:#eaf2fb; --cp-b:#bcd3ee;      /* control plane */
+    --c2:#eaf2fb; --c2-b:#bcd3ee;
+    --goad:#eef6ea; --goad-b:#c4ddb6;
+    --ccrts:#f1f0f5; --ccrts-b:#d3cfe0;
+    --sub:#ffffff; --sub-b:#e3e8f0;
+    --green:#2c7a4b; --red:#b4564f; --peer:#8a96a8; --brand:#7a1f2b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  body{background:#fff;color:var(--ink)}
+  .poster{width:1680px;padding:34px 40px 26px;background:#fff;position:relative}
+  .ptitle{font-size:23px;font-weight:800;letter-spacing:-.01em}
+  .psub{font-size:13.5px;color:var(--muted);margin-top:3px;margin-bottom:20px}
+  .stage{position:relative}
+  .grid{display:grid;grid-template-columns:118px 1fr 1.04fr;gap:64px;align-items:start;position:relative;z-index:2}
+
+  .cluster{border-radius:16px;padding:12px 13px 13px;position:relative}
+  .cluster>.ctitle{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:9px}
+  .cp{background:var(--cp);border:1.5px solid var(--cp-b)}
+  .c2{background:var(--c2);border:1.5px solid var(--c2-b)}
+  .goad{background:var(--goad);border:1.5px solid var(--goad-b)}
+  .ccrts{background:var(--ccrts);border:1.5px solid var(--ccrts-b)}
+  .sub{background:var(--sub);border:1px solid var(--sub-b);border-radius:11px;padding:9px 9px 10px}
+  .sub>.stitle{font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#9aa3b2;margin-bottom:7px}
+
+  .node{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--sub-b);
+        border-radius:10px;padding:7px 10px;box-shadow:0 1px 2px rgba(16,18,27,.05)}
+  .node .ico{width:30px;height:30px;flex:0 0 30px;background-size:contain;background-repeat:no-repeat;background-position:center}
+  .node .lbl b{display:block;font-size:12.5px;font-weight:700;line-height:1.15}
+  .node .lbl small{display:block;font-size:10.5px;color:var(--muted);line-height:1.25;margin-top:1px}
+  .glyph{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .glyph svg{width:46px;height:46px}
+  .glyph .gl{font-size:12px;font-weight:700;text-align:center;line-height:1.2}
+  .glyph .gl small{display:block;font-weight:500;color:var(--muted);font-size:10.5px}
+
+  .row{display:flex;gap:9px}
+  .col{display:flex;flex-direction:column;gap:9px}
+  .svc-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+  .svc{display:flex;flex-direction:column;align-items:center;gap:3px;background:#fff;border:1px solid var(--sub-b);border-radius:9px;padding:7px 4px}
+  .svc .ico{width:27px;height:27px;background-size:contain;background-repeat:no-repeat;background-position:center}
+  .svc span{font-size:9.5px;color:var(--muted);font-weight:600;text-align:center;line-height:1.1}
+
+  .estates{display:flex;flex-direction:column;gap:16px}
+  .caption{font-size:11px;color:#9aa3b2;text-align:center;margin-top:16px}
+  svg.conn{position:absolute;inset:0;width:100%;height:100%;z-index:5;pointer-events:none;overflow:visible}
+  .clab{font-size:10.5px;font-weight:700;fill:#3a414e}
+</style></head>
+<body>
+<div class="poster" id="poster">
+  <div class="ptitle">Red Team Infra — Solution Architecture</div>
+  <div class="psub">Operator → AWS Dashboard Server control plane (sole SSH jump) → per-VPC deployment estates, peered back to the dashboard</div>
+
+  <div class="stage" id="stage">
+    <svg class="conn" id="conn"></svg>
+    <div class="grid">
+
+      <!-- ===== Operator (far left) ===== -->
+      <div class="col" style="padding-top:34px">
+        <div class="glyph" id="operator">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#10121b" stroke-width="1.6"><circle cx="12" cy="7.5" r="3.6"/><path d="M4.5 20c0-4.2 3.4-6.5 7.5-6.5s7.5 2.3 7.5 6.5"/></svg>
+          <div class="gl">Operator<small>laptop</small></div>
+        </div>
+      </div>
+
+      <!-- ===== Control plane ===== -->
+      <div class="cluster cp" id="cp">
+        <div class="ctitle">Control plane · Dashboard Server VPC · 10.100.0.0/16 (AWS-hosted)</div>
+        <div class="col">
+          <div class="node" id="dashboard" style="border-color:#9bbbe0">
+            <span class="ico" style="background-image:url('icons/ec2.png')"></span>
+            <div class="lbl"><b>Dashboard Server</b><small>Flask UI + Terraform/Ansible engine · EIP · :5000 loopback</small></div>
+          </div>
+          <div class="row">
+            <div class="node" style="flex:1">
+              <span class="ico" style="background-image:url('icons/identity-and-access-management-iam.png')"></span>
+              <div class="lbl"><b>IAM role</b><small>no static keys</small></div>
+            </div>
+            <div class="node" style="flex:1">
+              <span class="ico" style="background-image:url('icons/simple-storage-service-s3.png')"></span>
+              <div class="lbl"><b>S3 remote state</b><small>Terraform backend</small></div>
+            </div>
+          </div>
+          <div class="sub">
+            <div class="stitle">AWS services orchestrated</div>
+            <div class="svc-grid">
+              <div class="svc"><span class="ico" style="background-image:url('icons/ec2.png')"></span><span>EC2</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/vpc.png')"></span><span>VPC</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/simple-storage-service-s3.png')"></span><span>S3</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/route-53.png')"></span><span>Route 53</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/certificate-manager.png')"></span><span>ACM</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/identity-and-access-management-iam.png')"></span><span>IAM</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/secrets-manager.png')"></span><span>Secrets Mgr</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/cloudwatch.png')"></span><span>CloudWatch</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/systems-manager.png')"></span><span>SSM</span></div>
+              <div class="svc"><span class="ico" style="background-image:url('icons/cloudfront.png')"></span><span>CloudFront</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Estates ===== -->
+      <div class="estates">
+
+        <!-- C2 -->
+        <div class="cluster c2" id="c2vpc">
+          <div class="ctitle">C2 VPC · 10.0.0.0/16</div>
+          <div class="row">
+            <div class="sub" style="flex:1.05">
+              <div class="stitle">Domain fronting (optional · us-east-1 ACM)</div>
+              <div class="col">
+                <div class="node" id="cf"><span class="ico" style="background-image:url('icons/cloudfront.png')"></span><div class="lbl"><b>CloudFront</b><small>front domain</small></div></div>
+                <div class="node"><span class="ico" style="background-image:url('icons/certificate-manager.png')"></span><div class="lbl"><b>ACM cert</b><small>DNS-validated</small></div></div>
+              </div>
+            </div>
+            <div class="sub" style="flex:1">
+              <div class="stitle">Public / DMZ subnets</div>
+              <div class="col">
+                <div class="node" id="target" style="border-color:#e6b9b6;background:#fdf4f3">
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#b4564f" stroke-width="1.5" style="flex:0 0 22px"><circle cx="8.5" cy="8" r="3"/><circle cx="16" cy="9" r="2.4"/><path d="M2.5 19c0-3.4 2.7-5.2 6-5.2s6 1.8 6 5.2"/><path d="M14.5 18.6c.2-2.6 2-4 4.2-4 2 0 3.3 1.2 3.6 3.4"/></svg>
+                  <div class="lbl"><b style="color:#b4564f">Internet · target</b><small>beacon callbacks</small></div>
+                </div>
+                <div class="node" id="r1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Redirector 1</b><small>HTTPS 443 · EIP</small></div></div>
+                <div class="node" id="r2"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Redirector 2</b><small>HTTPS 443 · EIP</small></div></div>
+                <div class="node"><span class="ico" style="background-image:url('icons/internet-gateway.png')"></span><div class="lbl"><b>IGW</b></div></div>
+              </div>
+            </div>
+            <div class="sub" style="flex:1">
+              <div class="stitle">Private subnets · 10.0.10.0/24</div>
+              <div class="col">
+                <div class="node" id="ts"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>CS Team Server</b><small>10.0.10.10 · :50050</small></div></div>
+                <div class="node" id="ab"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Attack Box</b><small>10.0.10.50 · Win+WSL2</small></div></div>
+                <div class="node"><span class="ico" style="background-image:url('icons/nat-gateway.png')"></span><div class="lbl"><b>NAT GW</b></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GOAD (balanced 2-col) -->
+        <div class="cluster goad" id="goadvpc">
+          <div class="ctitle">GOAD VPC · 192.168.56.0/24</div>
+          <div class="row">
+            <div class="sub" style="flex:1">
+              <div class="stitle">Public subnet · .64/26</div>
+              <div class="col">
+                <div class="node"><span class="ico" style="background-image:url('icons/internet-gateway.png')"></span><div class="lbl"><b>IGW</b></div></div>
+                <div class="node"><span class="ico" style="background-image:url('icons/nat-gateway.png')"></span><div class="lbl"><b>NAT GW</b></div></div>
+                <div class="node"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>GOAD Jumpbox</b><small>.100 · Ansible provisioning</small></div></div>
+              </div>
+            </div>
+            <div class="sub" style="flex:1.15">
+              <div class="stitle">Private subnet · .0/26 (goad-only in-lab attacker)</div>
+              <div class="col">
+                <div class="row">
+                  <div class="node" id="goad_ts" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>CS Team Server</b><small>.40 · in-lab C2</small></div></div>
+                  <div class="node" id="goad_ab" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Attack Box</b><small>.50 · Win</small></div></div>
+                </div>
+                <div class="node" id="goad_ad"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Vulnerable AD lab</b><small>DCs + member servers · sevenkingdoms / essos</small></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CCRTS -->
+        <div class="cluster ccrts" id="ccrtsvpc">
+          <div class="ctitle">CCRTS VPC · 192.168.57.0/24 (self-contained)</div>
+          <div class="row">
+            <div class="node" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Kali</b><small>.20 · CS on host</small></div></div>
+            <div class="node" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>Windows ws</b><small>.30</small></div></div>
+            <div class="node" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>AD DC</b><small>.40 · ccrts.local</small></div></div>
+            <div class="node" style="flex:1"><span class="ico" style="background-image:url('icons/ec2.png')"></span><div class="lbl"><b>ELK</b><small>.50</small></div></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+  <div class="caption">Dashboard Server is the sole SSH/RDP jump — no per-deployment bastion. goad-only ships an in-lab C2+attack box; combined-* attacks GOAD from the C2 VPC over peering.</div>
+</div>
+
+<script>
+const stage = document.getElementById('stage');
+const svg = document.getElementById('conn');
+const SVGNS='http://www.w3.org/2000/svg';
+function rectAnchor(r, tx, ty){
+  const cx=r.left+r.width/2, cy=r.top+r.height/2, dx=tx-cx, dy=ty-cy;
+  if(!dx&&!dy) return {x:cx,y:cy};
+  const hw=r.width/2, hh=r.height/2;
+  const s=1/Math.max(Math.abs(dx)/hw, Math.abs(dy)/hh);
+  return {x:cx+dx*s, y:cy+dy*s};
+}
+function connect(fromId,toId,o={}){
+  const {color='#8a96a8',dash=false,label='',width=2,arrow=true}=o;
+  const A=document.getElementById(fromId).getBoundingClientRect();
+  const B=document.getElementById(toId).getBoundingClientRect();
+  const S=stage.getBoundingClientRect();
+  const acx=A.left+A.width/2, acy=A.top+A.height/2, bcx=B.left+B.width/2, bcy=B.top+B.height/2;
+  let p1=rectAnchor(A,bcx,bcy), p2=rectAnchor(B,acx,acy);
+  p1={x:p1.x-S.left,y:p1.y-S.top}; p2={x:p2.x-S.left,y:p2.y-S.top};
+  const ln=document.createElementNS(SVGNS,'line');
+  ln.setAttribute('x1',p1.x);ln.setAttribute('y1',p1.y);ln.setAttribute('x2',p2.x);ln.setAttribute('y2',p2.y);
+  ln.setAttribute('stroke',color);ln.setAttribute('stroke-width',width);
+  if(dash) ln.setAttribute('stroke-dasharray','6 5');
+  ln.setAttribute('stroke-linecap','round');
+  svg.appendChild(ln);
+  if(arrow){
+    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), L=9, W=5;
+    const a1={x:p2.x-L*Math.cos(ang)+W*Math.sin(ang), y:p2.y-L*Math.sin(ang)-W*Math.cos(ang)};
+    const a2={x:p2.x-L*Math.cos(ang)-W*Math.sin(ang), y:p2.y-L*Math.sin(ang)+W*Math.cos(ang)};
+    const tri=document.createElementNS(SVGNS,'polygon');
+    tri.setAttribute('points',`${p2.x},${p2.y} ${a1.x},${a1.y} ${a2.x},${a2.y}`);
+    tri.setAttribute('fill',color); svg.appendChild(tri);
+  }
+  if(label){
+    const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+    const t=document.createElementNS(SVGNS,'text');
+    t.setAttribute('x',mx);t.setAttribute('y',my-4);t.setAttribute('text-anchor','middle');
+    t.setAttribute('class','clab'); t.textContent=label;
+    const bg=document.createElementNS(SVGNS,'rect'); svg.appendChild(bg); svg.appendChild(t);
+    const bb=t.getBBox();
+    bg.setAttribute('x',bb.x-4);bg.setAttribute('y',bb.y-1);bg.setAttribute('width',bb.width+8);bg.setAttribute('height',bb.height+2);
+    bg.setAttribute('fill','#ffffff');bg.setAttribute('opacity','.92');bg.setAttribute('rx','3');
+  }
+}
+function connectOrtho(fromId,toId,o={}){
+  const {color='#8a96a8',dash=false,label='',width=2}=o;
+  const S=stage.getBoundingClientRect();
+  const A=document.getElementById(fromId).getBoundingClientRect();
+  const B=document.getElementById(toId).getBoundingClientRect();
+  const ax=A.right-S.left, ay=A.top-S.top+A.height/2;
+  const bx=B.left-S.left,  by=B.top-S.top+B.height/2;
+  const gx=(ax+bx)/2;
+  const pl=document.createElementNS(SVGNS,'polyline');
+  pl.setAttribute('points',`${ax},${ay} ${gx},${ay} ${gx},${by} ${bx},${by}`);
+  pl.setAttribute('fill','none');pl.setAttribute('stroke',color);pl.setAttribute('stroke-width',width);
+  pl.setAttribute('stroke-linejoin','round');pl.setAttribute('stroke-linecap','round');
+  if(dash)pl.setAttribute('stroke-dasharray','6 5');
+  svg.appendChild(pl);
+  const tri=document.createElementNS(SVGNS,'polygon');
+  tri.setAttribute('points',`${bx},${by} ${bx-9},${by-5} ${bx-9},${by+5}`);
+  tri.setAttribute('fill',color);svg.appendChild(tri);
+  if(label){
+    const my=(ay+by)/2;
+    const t=document.createElementNS(SVGNS,'text');
+    t.setAttribute('x',gx);t.setAttribute('y',my-3);t.setAttribute('text-anchor','middle');t.setAttribute('class','clab');t.textContent=label;
+    const bg=document.createElementNS(SVGNS,'rect');svg.appendChild(bg);svg.appendChild(t);
+    const bb=t.getBBox();
+    bg.setAttribute('x',bb.x-4);bg.setAttribute('y',bb.y-1);bg.setAttribute('width',bb.width+8);bg.setAttribute('height',bb.height+2);
+    bg.setAttribute('fill','#ffffff');bg.setAttribute('opacity','.92');bg.setAttribute('rx','3');
+  }
+}
+function draw(){
+  svg.innerHTML='';
+  connect('operator','dashboard',{color:'#2c7a4b',width:2.4,label:'SSH key · IP allow-list'});
+  connectOrtho('cp','c2vpc',{dash:true,label:'VPC peering'});
+  connectOrtho('cp','goadvpc',{dash:true,label:'VPC peering'});
+  connectOrtho('cp','ccrtsvpc',{dash:true,label:'SSH/RDP jump'});
+}
+window.addEventListener('load',()=>{ setTimeout(draw,150); });
+</script>
+</body></html>

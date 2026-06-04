@@ -1,0 +1,17 @@
+---
+# Test Lab — Phase 2: domain controller promotion.
+#
+# Promotes tldc01 to the first DC of the testlab.local forest, installs
+# DNS, installs AD CS as an Enterprise Subordinate CA with NO default
+# templates (so ESC1/ESC2 bolt-ons can author vulnerable templates from
+# a clean state), and lays down a small OU skeleton.
+#
+# Delegates the heavy lifting to the `testlab_dc` role so the entry
+# playbook stays a thin orchestration shim.
+
+- name: "Test Lab | dc | promote tldc01 and install AD CS"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: testlab_dc
+      tags: ['testlab_dc']
