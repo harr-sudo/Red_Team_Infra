@@ -33,7 +33,6 @@ from webapp.backend.utils.destroy_safety import (
     parse_top_level_modules as _parse_top_level_modules,
     compute_foreign_modules as _compute_foreign_modules,
 )
-from webapp.backend.middleware.identity import get_operator
 
 
 def _resolve_project_tfvars(project_param, default_tfvars):
@@ -463,9 +462,14 @@ def add_history_entry(message, level='info', details=None, project_name=None, en
         entry['project_name'] = project_name
     if entry_type:
         entry['entry_type'] = entry_type
+    # Attribute the deploy to the VERIFIED operator (the signed, SSH-bound
+    # g.operator), NOT the old spoofable ss/proc SSH-trace heuristic — deploy
+    # history is a high-value audit record and must be non-repudiable.
     try:
-        entry['initiated_by'] = get_operator()
-    except:
+        from flask import g, has_request_context
+        op = getattr(g, 'operator', None) if has_request_context() else None
+        entry['initiated_by'] = (op or {}).get('id') or 'system'
+    except Exception:
         entry['initiated_by'] = 'system'
     history.append(entry)
     save_deployment_history(history)

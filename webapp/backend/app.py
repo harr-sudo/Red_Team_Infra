@@ -19,9 +19,9 @@ sys.path.insert(0, str(project_root))
 # Frontend path
 frontend_path = Path(__file__).parent.parent / 'frontend'
 
-from flask import Flask, g, render_template, jsonify, request, send_from_directory
+from flask import Flask, g, render_template, jsonify, request, send_from_directory, make_response, redirect
 from flask_cors import CORS
-from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
+from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal, runtime_probes
 from webapp.backend.routes import operators as operators_routes
 from webapp.backend.routes import audit as audit_routes
 from webapp.backend.routes import bolton as bolton_routes
@@ -29,8 +29,8 @@ from webapp.backend.routes import palette as palette_routes
 from webapp.backend.routes import presence as presence_routes
 from webapp.backend.routes import test_lab as test_lab_routes
 from webapp.backend.routes import settings as settings_routes
-from webapp.backend.middleware import identity
 from webapp.backend.services import operator_service
+from webapp.backend.services import identity_token, peercred_identity
 
 _logger = logging.getLogger(__name__)
 
@@ -122,9 +122,11 @@ def enforce_loopback():
         return jsonify({"error": "Access denied - connect via SSH tunnel"}), 403
 
 
-# Resolve the current operator from the dashboard_operator cookie on every
-# request and bind to flask.g.operator. The cookie is unsigned by design —
-# trust is upstream (AWS IAM + SSH). See Decision #23 / M-Operators.
+# Resolve the current operator on every request and bind to flask.g.operator.
+# The dashboard_operator cookie holds an HMAC-signed identity token bound to the
+# operator's SSH-authenticated Linux user (SO_PEERCRED-minted); resolve_from_request
+# verifies the signature and, in prod, trusts ONLY a valid token. See M-Operators
+# + services/identity_token.py.
 @app.before_request
 def _resolve_operator():
     g.operator = operator_service.resolve_from_request(request)
@@ -140,9 +142,9 @@ app.register_blueprint(tools.bp, url_prefix='/api/tools')
 app.register_blueprint(profiles.bp, url_prefix='/api/profiles')
 app.register_blueprint(costs.bp, url_prefix='/api/costs')
 app.register_blueprint(setup_check.bp, url_prefix='/api/setup-check')
+app.register_blueprint(runtime_probes.bp, url_prefix='/api/health/probes')  # Mission Control runtime probes
 app.register_blueprint(beacon.bp, url_prefix='/api/beacon')
 app.register_blueprint(terminal.bp)
-app.register_blueprint(identity.bp)
 app.register_blueprint(operators_routes.bp)
 app.register_blueprint(audit_routes.bp)
 app.register_blueprint(bolton_routes.bp)  # Vulnerable-lab bolt-on feature
@@ -153,6 +155,69 @@ app.register_blueprint(settings_routes.bp)  # Dashboard settings — Dashboard S
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)
+
+# Start the SO_PEERCRED identity minter — authenticates operators by their
+# SSH-bound uid and mints signed identity tokens. Prod/Linux only; no-op in dev.
+peercred_identity.start()
+
+
+@app.route('/login')
+def operator_login():
+    """One-time identity handoff: the connect helper opens this URL with a
+    single-use code (?c=) minted by the SO_PEERCRED socket. We redeem the code
+    EXACTLY once (so a leaked URL/log line is near-worthless), then mint the real
+    12h signed token and set it as the HttpOnly, SameSite=Strict cookie."""
+    code = request.args.get('c', '')
+    op_id = identity_token.redeem_handoff(code)
+    if not op_id:
+        return jsonify({"error": "invalid, expired, or already-used login code"}), 401
+    token = identity_token.mint(op_id)
+    resp = make_response(redirect('/'))
+    resp.set_cookie('dashboard_operator', token,
+                    max_age=identity_token.TTL_DEFAULT,
+                    httponly=True, samesite='Strict', path='/')
+    return resp
+
+
+@app.route('/api/identity/dev-login', methods=['POST'])
+def dev_login():
+    """Dev-only: mint a signed token for the local user so a laptop instance
+    uses the same secure cookie path. Disabled in production (where operators
+    must obtain their token from the SO_PEERCRED socket via the connect helper)."""
+    if not operator_service.is_dev_mode():
+        return jsonify({"error": "dev-login is disabled in production"}), 403
+    import pwd
+    try:
+        raw = pwd.getpwuid(os.getuid()).pw_name
+    except Exception:
+        raw = "operator"
+    # Canonicalize to the shared operator-id grammar so the stored id and the
+    # minted token id match (same normalization the SO_PEERCRED minter applies).
+    name = operator_service.canonical_id(raw) or "operator"
+    if not operator_service.get(name):
+        try:
+            operator_service.add(name, raw.capitalize(), "#1b4965")
+        except Exception:
+            pass
+    token = identity_token.mint(name)
+    resp = make_response(jsonify({"success": True, "operator": name}))
+    resp.set_cookie('dashboard_operator', token,
+                    max_age=identity_token.TTL_DEFAULT,
+                    httponly=True, samesite='Strict', path='/')
+    return resp
+
+
+@app.route('/api/whoami', methods=['GET'])
+def whoami():
+    """Current operator identity — resolved SERVER-SIDE on every request from the
+    signed identity token (SO_PEERCRED-minted, bound to the SSH-authenticated
+    Linux user), never from a client-supplied value. Replaces the old, spoofable
+    ss/ps SSH-trace heuristic. Returns 'unknown' in prod when the cookie is
+    missing/invalid."""
+    op = getattr(g, 'operator', None) or operator_service._unknown()
+    return jsonify({"operator": op.get("id", "unknown"),
+                    "display": op.get("display"),
+                    "color": op.get("color")})
 
 # Serve frontend
 #
@@ -335,16 +400,19 @@ def serve_doc(doc_path):
     return content, 200, {'Content-Type': 'text/markdown; charset=utf-8'}
 
 if __name__ == '__main__':
+    # Port defaults to 5000 (the SSH-tunnel convention); override with PORT for
+    # local dev when 5000 is taken (e.g. macOS AirPlay Receiver).
+    _port = int(os.environ.get("PORT", 5000))
     print("=" * 60)
     print("Red Team Infrastructure Dashboard Server")
     print("=" * 60)
-    print("Listening on 127.0.0.1:5000 (SSH tunnel access)")
+    print(f"Listening on 127.0.0.1:{_port} (SSH tunnel access)")
     print("Press Ctrl+C to stop the server")
     print("=" * 60)
-    
+
     app.run(
         host='127.0.0.1',  # Localhost only — SSH tunnel provides external access
-        port=5000,
+        port=_port,
         debug=False,
         threaded=True  # Allow concurrent requests (prevents one slow endpoint from blocking all others)
     )

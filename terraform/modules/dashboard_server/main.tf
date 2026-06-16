@@ -419,8 +419,19 @@ resource "aws_instance" "dashboard" {
     dynamodb_table = aws_dynamodb_table.tflock.name
     aws_region     = var.aws_region
   })
+  # user_data runs ONCE at first boot. Never replace the live control plane just
+  # because operator_ssh_public_keys (or anything else in user_data) changed.
+  user_data_replace_on_change = false
 
   tags = merge(var.tags, { Name = "${var.project_name}-server" })
+
+  lifecycle {
+    # user_data is boot-only, so a later edit (e.g. adding an operator) would
+    # otherwise show a misleading no-op diff. Operators are added to a running
+    # dashboard LIVE via scripts/server/onboard-operator.sh, not by re-applying
+    # user_data — so ignore drift on it and never churn the instance.
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_eip" "dashboard" {

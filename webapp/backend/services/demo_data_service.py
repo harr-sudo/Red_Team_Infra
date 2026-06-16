@@ -160,10 +160,19 @@ def deployment_state() -> dict[str, Any]:
             "dns_nameservers": ["ns-1.awsdns-01.com", "ns-2.awsdns-02.net"],
             # Domain fronting disabled in this demo profile
             "enable_domain_fronting": False,
-            # Redirector (DMZ public subnet)
+            # Redirectors (DMZ) — BOTH, so the topology renders two nodes that
+            # match the probe payload (IPs + instance_ids align, so the health
+            # overlay colours each correctly).
+            "redirectors": [
+                {"public_ip": "203.0.113.50", "private_ip": "10.0.1.10",
+                 "instance_id": "i-0demo-redirector-01", "state": "running"},
+                {"public_ip": "203.0.113.51", "private_ip": "10.0.2.10",
+                 "instance_id": "i-0demo-redirector-02", "state": "running"},
+            ],
+            # Singular fallbacks (legacy resolver paths).
             "redirector_public_ip": "203.0.113.50",
-            "redirector_private_ip": "10.0.1.20",
-            "redirector_instance_id": "i-0demoredir01",
+            "redirector_private_ip": "10.0.1.10",
+            "redirector_instance_id": "i-0demo-redirector-01",
             "redirector_state": "running",
             # Team server (C2 private subnet) — both shapes (singular fallback
             # + plural c2_servers array) so either resolver path works.
@@ -203,6 +212,242 @@ def deployment_state() -> dict[str, Any]:
             "c2_server_port": 50050,
             "c2_listener_port": 443,
         },
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Mission Control — runtime-probe demo payloads
+# ──────────────────────────────────────────────────────────────────────
+# Three switchable states so an operator can showcase Mission Control's
+# runtime-health surface without any live infra: everything healthy,
+# partially degraded, and a critical-failure scenario. The selected state
+# is held in-process (sticky across the status/run/poll endpoints) so the
+# demo flows through the EXACT same pipeline as a real probe run — the
+# frontend can't tell the difference apart from the demo_state marker.
+
+DEMO_PROBE_STATES = ("healthy", "degraded", "critical")
+_DEMO_PROBE_STATE = "healthy"
+_DEMO_PROBE_LOCK = threading.RLock()
+
+
+def get_probe_state() -> str:
+    with _DEMO_PROBE_LOCK:
+        return _DEMO_PROBE_STATE
+
+
+def set_probe_state(state: str) -> str:
+    """Set the sticky demo probe state. Unknown values fall back to healthy."""
+    global _DEMO_PROBE_STATE
+    s = (state or "").strip().lower()
+    if s not in DEMO_PROBE_STATES:
+        s = "healthy"
+    with _DEMO_PROBE_LOCK:
+        _DEMO_PROBE_STATE = s
+    return s
+
+
+def _chk(cid: str, status: str, detail: str) -> dict[str, Any]:
+    return {"id": cid, "status": status, "detail": detail}
+
+
+def _redir(name: str, ip: str, checks: list, status: str, domain: str) -> dict[str, Any]:
+    # Synthetic response time so the demo's response-time trend has data
+    # (slower when degraded/critical).
+    rms = 142 if status == "ok" else (320 if status == "warn" else 540)
+    # Distinct private IP per redirector (each in its own DMZ subnet) so the
+    # topology health overlay keys cleanly — no IP collision between the two.
+    private = "10.0.1.10" if name.endswith("01") else "10.0.2.10"
+    return {
+        "instance_id": f"i-0demo-{name}", "name": name, "role": "redirector",
+        "public_ip": ip, "private_ip": private, "status": status,
+        "endpoint": domain, "checks": checks, "response_ms": rms,
+    }
+
+
+def _demo_ext_hosts(state: str) -> list[dict[str, Any]]:
+    """Attached-extension demo hosts so Mission Control's fleet map can showcase
+    a C2 deployment extended with an in-VPC Test Lab (10.0.20.0/24) and a peered
+    GOAD lab (192.168.56.0/24). Each host's status == worst-of-its-checks; the
+    extensions stay within the deployment's overall rollup for the state."""
+    def h(name, ip, plat, ext, role, status, checks):
+        return {"instance_id": f"i-0demo-{name}", "name": name, "role": role,
+                "private_ip": ip, "public_ip": "", "platform": plat,
+                "ext": ext, "status": status, "checks": checks}
+    ok = lambda cid, d: _chk(cid, "ok", d)
+    # Healthy baseline; degraded/critical tweak one host each so the sub-boxes
+    # carry their own status without exceeding the state's overall rollup.
+    tlms_status, tlms_checks = "ok", [ok("rdp_reachable", "3389 reachable"), ok("disk", "C: 39% used")]
+    tlws_status, tlws_checks = "ok", [ok("rdp_reachable", "3389 reachable"), ok("disk", "C: 47% used")]
+    goaddc_status, goaddc_checks = "ok", [ok("ad_reachable", "LDAP 389 reachable"), ok("disk", "C: 51% used")]
+    if state == "degraded":
+        tlws_status = "warn"
+        tlws_checks = [ok("rdp_reachable", "3389 reachable"), _chk("disk", "warn", "C: 84% used")]
+    elif state == "critical":
+        goaddc_status = "crit"
+        goaddc_checks = [_chk("ad_reachable", "crit", "LDAP 389 unreachable — lab DC down"),
+                         _chk("disk", "warn", "C: 88% used")]
+        tlms_status = "warn"
+        tlms_checks = [ok("rdp_reachable", "3389 reachable"), _chk("memory", "warn", "memory 86% used")]
+    return [
+        h("tldc01", "10.0.20.10", "windows", "test_lab", "dc", "ok",
+          [ok("rdp_reachable", "3389 reachable"), ok("disk", "C: 42% used")]),
+        h("tlms01", "10.0.20.11", "windows", "test_lab", "member", tlms_status, tlms_checks),
+        h("tlws01", "10.0.20.12", "windows", "test_lab", "workstation", tlws_status, tlws_checks),
+        h("tllinux01", "10.0.20.13", "linux", "test_lab", "linux", "ok",
+          [ok("ssh_reachable", "22 reachable"), ok("disk", "root fs 29% used")]),
+        h("goad-dc01", "192.168.56.10", "windows", "goad", "dc", goaddc_status, goaddc_checks),
+        h("goad-srv02", "192.168.56.11", "windows", "goad", "server", "ok",
+          [ok("rdp_reachable", "3389 reachable"), ok("disk", "C: 55% used")]),
+        h("goad-ws01", "192.168.56.12", "windows", "goad", "workstation", "ok",
+          [ok("rdp_reachable", "3389 reachable"), ok("disk", "C: 48% used")]),
+    ]
+
+
+def probe_payload(state: str | None = None) -> dict[str, Any]:
+    """Full runtime-probe payload for the demo deployment in the given state
+    (defaults to the currently-selected sticky state). Shape matches
+    RuntimeProbeService.probe_project() exactly so the frontend renders it
+    through the identical code path."""
+    state = (state or get_probe_state()).strip().lower()
+    if state not in DEMO_PROBE_STATES:
+        state = "healthy"
+    domain = "demo-engagement.example.com"
+    checked_at = _iso(_now())
+
+    ts_ok = {
+        "instance_id": "i-0demots01", "name": "c2-teamserver-01", "role": "teamserver",
+        "private_ip": "10.0.10.20", "public_ip": "", "status": "ok",
+        "checks": [_chk("c2_mgmt_port", "ok", "50050 reachable over peering"),
+                   _chk("c2_listener_port", "ok", "listener 443 up"),
+                   _chk("disk", "ok", "root fs 34% used"),
+                   _chk("memory", "ok", "memory 48% used"),
+                   _chk("cpu_load", "ok", "load 0.62 over 2 vCPU")],
+    }
+    def _ab(checks: list, status: str) -> dict[str, Any]:
+        # Windows attack box — host resource metrics via the PowerShell/CIM SSM
+        # path. instance_id/IP align with deployment_state outputs so the
+        # topology overlay colours it.
+        return {"instance_id": "i-0demoattack01", "name": "attackbox-01",
+                "role": "attackbox", "private_ip": "10.0.10.30", "public_ip": "",
+                "platform": "windows", "status": status, "checks": checks}
+
+    peering_ok = {"id": "vpc_peering", "label": "VPC peering", "kind": "fabric", "status": "ok",
+                  "checks": [_chk("peering_pcx-0demo01", "ok", "pcx-0demo01: active")]}
+    domain_ok = {"id": "domain", "label": domain, "kind": "dns", "status": "ok",
+                 "checks": [_chk("dns_resolves", "ok", "resolves to 203.0.113.50"),
+                            _chk("dns_record", "ok", "A record points at redirector 203.0.113.50"),
+                            _chk("https_responds", "ok", "HTTP 200")]}
+
+    if state == "healthy":
+        hosts = [
+            _redir("redirector-01", "203.0.113.50", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "ok", "61d remaining"),
+                _chk("decoy_site", "ok", "HTTP 200, 'meridian' theme present"),
+                _chk("proxy_path", "ok", "C2 callback path forwarded to team server (HTTP 404)"),
+                _chk("http_reachable", "ok", "80 reachable"),
+                _chk("disk", "ok", "root fs 38% used"),
+                _chk("memory", "ok", "memory 52% used"),
+                _chk("cpu_load", "ok", "load 0.41 over 2 vCPU")], "ok", domain),
+            _redir("redirector-02", "203.0.113.51", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "ok", "54d remaining"),
+                _chk("decoy_site", "ok", "HTTP 200, 'meridian' theme present"),
+                _chk("proxy_path", "ok", "C2 callback path forwarded to team server (HTTP 404)"),
+                _chk("http_reachable", "ok", "80 reachable"),
+                _chk("disk", "ok", "root fs 41% used"),
+                _chk("memory", "ok", "memory 55% used"),
+                _chk("cpu_load", "ok", "load 0.33 over 2 vCPU")], "ok", domain),
+            ts_ok,
+            _ab([_chk("disk", "ok", "C: 44% used"),
+                 _chk("memory", "ok", "memory 57% used"),
+                 _chk("cpu", "ok", "CPU 12% busy")], "ok"),
+        ]
+        fabric = [peering_ok, domain_ok]
+        rollup = "ok"
+    elif state == "degraded":
+        hosts = [
+            _redir("redirector-01", "203.0.113.50", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "ok", "61d remaining"),
+                _chk("decoy_site", "ok", "HTTP 200, 'meridian' theme present"),
+                _chk("proxy_path", "ok", "C2 callback path forwarded to team server (HTTP 404)"),
+                _chk("http_reachable", "ok", "80 reachable"),
+                _chk("disk", "ok", "root fs 44% used"),
+                _chk("memory", "ok", "memory 58% used"),
+                _chk("cpu_load", "ok", "load 0.51 over 2 vCPU")], "ok", domain),
+            _redir("redirector-02", "203.0.113.51", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "warn", "expires in 9d"),
+                _chk("decoy_site", "ok", "HTTP 200"),
+                _chk("proxy_path", "ok", "C2 callback path forwarded to team server (HTTP 404)"),
+                _chk("http_reachable", "warn", "80 not reachable"),
+                _chk("disk", "warn", "root fs 83% used"),
+                _chk("memory", "ok", "memory 61% used"),
+                _chk("cpu_load", "ok", "load 0.88 over 2 vCPU")], "warn", domain),
+            ts_ok,
+            _ab([_chk("disk", "ok", "C: 49% used"),
+                 _chk("memory", "ok", "memory 60% used"),
+                 _chk("cpu", "warn", "CPU 92% busy")], "warn"),
+        ]
+        fabric = [peering_ok, domain_ok]
+        rollup = "warn"
+    else:  # critical
+        hosts = [
+            _redir("redirector-01", "203.0.113.50", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "crit", "EXPIRED 2d ago"),
+                _chk("decoy_site", "crit", "default nginx page — decoy not deployed"),
+                _chk("proxy_path", "crit", "C2 path served the decoy page — proxy rule not forwarding to team server"),
+                _chk("http_reachable", "ok", "80 reachable"),
+                _chk("disk", "warn", "root fs 88% used"),
+                _chk("memory", "crit", "memory 96% used"),
+                _chk("cpu_load", "crit", "load 7.20 over 2 vCPU")], "crit", domain),
+            _redir("redirector-02", "203.0.113.51", [
+                _chk("tls_reachable", "ok", "443 reachable"),
+                _chk("cert_expiry", "warn", "expires in 5d"),
+                _chk("decoy_site", "ok", "HTTP 200"),
+                _chk("proxy_path", "ok", "C2 callback path forwarded to team server (HTTP 404)"),
+                _chk("http_reachable", "ok", "80 reachable"),
+                _chk("disk", "ok", "root fs 46% used"),
+                _chk("memory", "ok", "memory 63% used"),
+                _chk("cpu_load", "ok", "load 0.74 over 2 vCPU")], "warn", domain),
+            {"instance_id": "i-0demots01", "name": "c2-teamserver-01", "role": "teamserver",
+             "private_ip": "10.0.10.20", "public_ip": "", "status": "crit",
+             "checks": [_chk("c2_mgmt_port", "crit", "50050 unreachable — operators can't connect"),
+                        _chk("c2_listener_port", "crit", "listener 443 down — beacons cannot check in"),
+                        _chk("disk", "crit", "root fs 95% used"),
+                        _chk("memory", "warn", "memory 87% used"),
+                        _chk("cpu_load", "ok", "load 1.10 over 2 vCPU")]},
+            _ab([_chk("disk", "ok", "C: 61% used"),
+                 _chk("memory", "ok", "memory 64% used"),
+                 _chk("cpu", "crit", "CPU 99% busy")], "crit"),
+        ]
+        fabric = [
+            {"id": "vpc_peering", "label": "VPC peering", "kind": "fabric", "status": "crit",
+             "checks": [_chk("peering_pcx-0demo01", "crit", "pcx-0demo01: failed")]},
+            {"id": "domain", "label": domain, "kind": "dns", "status": "warn",
+             "checks": [_chk("dns_resolves", "ok", "resolves to 198.51.100.9"),
+                        _chk("dns_record", "warn", "resolves to 198.51.100.9, expected redirector 203.0.113.50"),
+                        _chk("https_responds", "warn", "HTTP 502")]},
+        ]
+        rollup = "crit"
+
+    # Attached extensions (in-VPC Test Lab + peered GOAD) — kept within the
+    # state's rollup so they never contradict the headline status.
+    hosts = hosts + _demo_ext_hosts(state)
+
+    counts = {"ok": 0, "warn": 0, "crit": 0, "unknown": 0}
+    for it in hosts + fabric:
+        counts[it["status"]] = counts.get(it["status"], 0) + 1
+    return {
+        "project": DEMO_PROJECT, "region": "eu-central-1",
+        "checked_at": checked_at, "domain": domain, "vpc_cidr": "10.0.0.0/16",
+        "status": rollup, "demo": True, "demo_state": state,
+        "hosts": hosts, "fabric": fabric,
+        "summary": {"total": len(hosts) + len(fabric), "hosts": len(hosts),
+                    "ok": counts["ok"], "warn": counts["warn"],
+                    "crit": counts["crit"], "unknown": counts["unknown"]},
     }
 
 

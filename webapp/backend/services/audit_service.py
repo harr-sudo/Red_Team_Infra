@@ -39,10 +39,29 @@ _ROTATION_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MiB — rotate when log excee
 _MAX_ARCHIVES = 3  # keep audit.log.1.gz .. audit.log.3.gz
 
 
+def _harden_log():
+    """Owner-only perms (0600) so other operators sharing the `redteam` group on
+    the dashboard cannot read OR modify the audit log — only the `dashboard`
+    service user (who owns it) can append. Idempotent + best-effort.
+
+    NOTE: true FS-level append-only (chattr +a) is intentionally NOT done from
+    here — it needs root (the service runs unprivileged with NoNewPrivileges)
+    and is incompatible with the rename-based rotation below. If append-only
+    immutability is wanted it must be applied at provision time by root with a
+    root-run logrotate that clears the flag during rotation (see SECURE_IDENTITY
+    plan); off-box shipping is the stronger future option."""
+    try:
+        os.chmod(_LOG_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def _ensure_log():
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not _LOG_PATH.exists():
         _LOG_PATH.touch()
+    # Re-assert 0600 every ensure so post-rotation files stay owner-only too.
+    _harden_log()
 
 
 def _rotate_if_needed():

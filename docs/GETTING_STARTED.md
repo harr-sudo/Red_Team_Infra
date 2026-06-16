@@ -174,39 +174,45 @@ When it finishes, use the **Terminal** tab to SSH into any instance, or the tunn
 
 ## 5. Onboard a Second Operator
 
-A second operator needs only an SSH key + a browser. Add them in one of two ways.
+A second operator needs only an SSH key + a browser. **How you add them depends on whether the dashboard already exists** — operator Linux users are created by the server's `user_data`, which AWS runs **only once, at first boot**.
 
-**Option A — re-run the setup script.** Run `./scripts/server/setup-dashboard.sh` again and answer the second-operator prompts (paste their public key, name, and IP). In resume mode this updates the config and re-applies.
+**Running dashboard (the usual case) — `onboard-operator.sh`.** This creates their `redteam`-group Linux user + authorized key live on the box (give it their name and public-key file):
 
-**Option B — edit the config and apply.** Add their public key and source IP to `configs/dashboard.tfvars`:
+```bash
+./scripts/server/onboard-operator.sh operator2 ./operator2.pub
+```
+
+Then permit their source IP — a security-group change, which *does* apply live — by adding it to `dashboard_allowed_ips` in `configs/dashboard.tfvars` and re-applying:
 
 ```hcl
 dashboard_allowed_ips = [
   "YOUR_PUBLIC_IP/32",
   "SECOND_OPERATOR_IP/32",
 ]
-
-operator_ssh_public_keys = {
-  "your-username" = "ssh-ed25519 AAAA... you@machine"
-  "operator2"     = "ssh-ed25519 AAAA... operator2@laptop"
-}
 ```
-
-Then apply:
 
 ```bash
 cd terraform
 terraform apply -var-file=../configs/dashboard.tfvars -target=module.dashboard_server
 ```
 
-They then connect exactly like you do:
+> **Note:** adding them to `operator_ssh_public_keys` and re-applying does **not** create their Linux user on a *running* dashboard. `user_data` is boot-only and is intentionally ignored on an existing instance (so it neither re-runs nor replaces the control plane) — use `onboard-operator.sh` for the live user.
 
-```bash
-ssh -L 5000:localhost:5000 operator2@<dashboard-eip>
-# then open http://localhost:5000
+**Brand-new dashboard — bake them in.** Set `operator_ssh_public_keys` in `configs/dashboard.tfvars` *before* the first apply and they're created at boot:
+
+```hcl
+operator_ssh_public_keys = {
+  "your-username" = "ssh-ed25519 AAAA... you@machine"
+  "operator2"     = "ssh-ed25519 AAAA... operator2@laptop"
+}
 ```
 
-No AWS CLI, Terraform, or other tooling is required on their laptop — the server handles everything.
+Either way they then connect with no AWS CLI or Terraform on their laptop — just an SSH key + browser:
+
+```bash
+./scripts/server/connect-dashboard.sh operator2@<dashboard-eip>
+# forwards the port + opens a single-use signed login URL
+```
 
 ---
 

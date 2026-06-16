@@ -46,8 +46,8 @@ ansible/                    # Configuration management
 webapp/                     # Deployment & management UI
 ├── backend/                # Flask API
 │   ├── app.py              # Entry point
-│   ├── routes/             # API endpoints (config, deploy, health, goad, aws_check)
-│   ├── services/           # Business logic (terraform_service, aws_permissions)
+│   ├── routes/             # API endpoints (config, deploy, health, goad, aws_check, runtime_probes, operators)
+│   ├── services/           # Business logic (terraform_service, aws_permissions, runtime_probe_service, health_history_service, operator/peercred identity)
 │   └── utils/              # Validators, config parser, S3 upload
 ├── frontend/               # HTML/CSS/JS SPA
 │   ├── index.html          # Main UI
@@ -251,6 +251,9 @@ Separate IAM roles per VPC (C2 vs GOAD). See `docs/S3_CONFUSED_DEPUTY_FIX.md`.
 | `webapp/backend/app.py` | Flask API entry point (server-only, loopback guard) |
 | `webapp/backend/routes/deploy.py` | Deployment API endpoints |
 | `webapp/backend/services/terraform_service.py` | Terraform integration logic |
+| `webapp/backend/services/runtime_probe_service.py` | Mission Control runtime probes (health/metrics/proxy-path) + scheduler |
+| `webapp/backend/services/peercred_identity.py` | SO_PEERCRED operator identity (kernel uid) + signed-token minting |
+| `docs/MISSION_CONTROL.md` | Mission Control fleet-health monitoring guide |
 | `webapp/frontend/js/app.js` | Frontend deployment UI logic |
 | `configs/terraform.tfvars.example` | Configuration template |
 | `configs/dashboard.tfvars.example` | Dashboard server configuration template |

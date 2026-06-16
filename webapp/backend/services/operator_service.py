@@ -1,10 +1,13 @@
-"""Operator profile store + lookup.
+"""Operator profile store + lookup + request resolution.
 
 Profile data lives at ~/.dashboard/operators.json — a simple list of
-{id, display, color, created}. No password / session — identity is
-asserted by the unsigned cookie `dashboard_operator=<id>` set by the
-operator from the header chip. Trust boundary is AWS IAM + SSH access
-upstream of the dashboard.
+{id, display, color, created}. Identity is AUTHENTICATED via the
+`dashboard_operator` cookie, which carries an HMAC-signed token bound to the
+operator's SSH-authenticated Linux user (see identity_token.py +
+peercred_identity.py). resolve_from_request() verifies the signature and, in
+production, trusts ONLY a valid signed token (a bare/self-asserted cookie
+resolves to 'unknown'). Dev (no SO_PEERCRED socket) stays lenient for a single
+local user.
 """
 import json
 import os
@@ -38,6 +41,28 @@ DEFAULT_COLORS = ["#a31621", "#3b82f6", "#0d9488", "#7c3aed", "#ea580c", "#65a30
 # values from DEFAULT_COLORS, but the PATCH endpoint accepts arbitrary input
 # from any client so we validate strictly.
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Canonical operator-id grammar, SHARED with identity_token (^[a-z_][a-z0-9_-]{0,31}$).
+# A single normalizer used everywhere a Linux username becomes an operator id, so
+# the auto-registered id, the stored id, and the id baked into a signed token are
+# always identical. Without this, a perfectly valid Linux username (uppercase, a
+# dot, or >32 chars) would register one way but fail the token grammar — minting
+# an empty token and locking the operator out.
+_CANON_STRIP_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def canonical_id(name):
+    """Map any Linux username (or user-supplied id) to a canonical operator id
+    matching the identity-token grammar, or '' if nothing usable remains.
+    Lowercases, replaces out-of-grammar runs with '-', ensures a valid leading
+    char ([a-z_]), and caps length at 32. Idempotent."""
+    s = (name or "").strip().lower()
+    s = _CANON_STRIP_RE.sub("-", s).strip("-")
+    if not s:
+        return ""
+    if not (s[0].isalpha() or s[0] == "_"):
+        s = "op-" + s
+    return s[:32]
 
 
 def _ensure_store():
@@ -81,10 +106,14 @@ def get(op_id):
 
 
 def add(op_id, display, color):
-    """Add a new operator. Returns the created entry."""
-    op_id = (op_id or "").strip().lower()
-    if not op_id or not op_id.replace("-", "").replace("_", "").isalnum():
-        raise ValueError("operator id must be alphanumeric with optional -/_ separators")
+    """Add a new operator. Returns the created entry.
+
+    The id is normalized via canonical_id() so it always matches the identity-
+    token grammar — the same normalization the SO_PEERCRED minter applies, so an
+    auto-registered operator and its token id never diverge."""
+    op_id = canonical_id(op_id)
+    if not op_id:
+        raise ValueError("operator id must contain at least one [a-z0-9_-] character")
     with _LOCK:
         data = load()
         if any(o["id"] == op_id for o in data["operators"]):
@@ -212,17 +241,59 @@ def get_last_active_map():
     return out
 
 
-def resolve_from_request(request):
-    """Read the dashboard_operator cookie, fall back to default. Returns the
-    full operator dict or a synthesized 'unknown' record (never None)."""
-    cookie_id = request.cookies.get("dashboard_operator")
-    if cookie_id:
-        op = get(cookie_id)
-        if op:
-            return op
-    default_id = get_default()
-    if default_id:
-        op = get(default_id)
-        if op:
-            return op
+def _unknown():
     return {"id": "unknown", "display": "Unknown", "color": "#666666", "created": None}
+
+
+def is_dev_mode():
+    """Dev (laptop) vs prod (AWS Dashboard Server). In prod the dashboard runs on
+    Linux where SO_PEERCRED is available and the socket minter authenticates
+    operators by their SSH-bound uid, so we accept ONLY signed identity tokens.
+    In dev there is no peercred socket, so we stay lenient (single local user)
+    rather than locking the operator out. `DASHBOARD_DEV=1` forces dev."""
+    if os.environ.get("DASHBOARD_DEV") == "1":
+        return True
+    try:
+        import socket as _s
+        return not hasattr(_s, "SO_PEERCRED")
+    except Exception:
+        # Fail SAFE, not open: if we can't tell, assume PRODUCTION (strict — accept
+        # only signed tokens). Never grant dev leniency (bare-cookie acceptance) on
+        # an error.
+        return False
+
+
+def resolve_from_request(request):
+    """Resolve the operator from the `dashboard_operator` cookie.
+
+    SECURE path (always): the cookie holds an HMAC-signed identity token minted
+    by the SO_PEERCRED socket (bound to the operator's SSH-authenticated Linux
+    user). We verify it and trust ONLY a valid signature.
+
+    In dev (no peercred socket) we additionally accept a bare op-id cookie and
+    fall back to the default local operator, so a laptop instance still works.
+    In prod an unverifiable cookie yields 'unknown' — never a trusted identity
+    from a self-asserted value. Returns a dict, never None."""
+    # Lazy import avoids a circular import (identity_token imports this module).
+    from webapp.backend.services import identity_token
+
+    cookie = request.cookies.get("dashboard_operator")
+    if cookie:
+        op_id = identity_token.verify(cookie)
+        if op_id:
+            op = get(op_id)
+            if op:
+                return op
+        # Dev-only leniency: accept a legacy/bare op-id cookie.
+        if is_dev_mode():
+            op = get(cookie)
+            if op:
+                return op
+
+    if is_dev_mode():
+        default_id = get_default()
+        if default_id:
+            op = get(default_id)
+            if op:
+                return op
+    return _unknown()

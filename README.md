@@ -68,6 +68,10 @@ Operator laptop  ──(SSH key + IP allow-list)──▶  Dashboard Server (AWS
 
 > The UI ships a built-in **demo mode** (synthetic data, no AWS resources) — the captures below are taken in that mode so the interface is shown without exposing live infrastructure.
 
+![Mission Control — fleet health monitoring](docs/assets/screenshots/mission-control.png)
+
+***Mission Control*** — live fleet health at a glance: each deployment's worst-wins rollup, the hub-and-spoke VPC map with attached labs rendered as peered / in-VPC sub-boxes, and the interactive topology — all actively probed from the Dashboard Server.
+
 | | |
 |---|---|
 | ![Infrastructure Overview](docs/assets/screenshots/dashboard.png) | ![Beacon topology graph](docs/assets/screenshots/topology.png) |
@@ -83,6 +87,7 @@ Operator laptop  ──(SSH key + IP allow-list)──▶  Dashboard Server (AWS
 - **Browser control plane** — a Flask + vanilla-JS dashboard runs on the AWS Dashboard Server (systemd); configure, deploy, operate, and destroy without touching the CLI.
 - **C2 automation** — Cobalt Strike team servers, redirectors, in-browser beacon management over the CS REST API, a quick payload generator, and optional CloudFront domain fronting.
 - **Live topology graph** — full-screen, interactive infrastructure/beacon map with subnet clustering, draggable nodes, config-driven port labels, and a detail side panel.
+- **Mission Control (fleet health)** — a live single-pane monitor that actively probes every deployment from the Dashboard Server: redirector proxy-path-to-C2, decoy-site integrity, TLS certificate expiry, host disk/memory/CPU (Linux *and* Windows), VPC peering, and DNS A-record drift — with worst-wins status rollups, a hub-and-spoke fleet map (attached labs shown as peered sub-boxes), a background scheduler with a dead-man's-switch, and in-app alerts plus uptime / response-time history. See **[Mission Control](./docs/MISSION_CONTROL.md)**.
 - **In-browser terminal** — multi-tab SSH into any deployed instance, plus tunnel shortcuts for RDP, the CS client, and the REST API — no manual key hopping.
 - **Training labs** — GOAD (Game of Active Directory) variants and a self-contained CCRTS (CREST exam-mirror) lab with AD + an ELK stack for detection-rule iteration.
 - **Vulnerability lab & bolt-ons** — a dedicated, disposable Windows AD test lab (Server 2022 DC + member server + Win 11 workstation) you load with any of **34 catalogued, reversible bolt-ons** across 13 categories: injectable vulns spanning AD attack paths (Kerberoasting, AD CS ESC1/2, unconstrained delegation, GPP cpassword, LAPS), marquee CVEs (ZeroLogon, PrintNightmare, PetitPotam, PwnKit), and Linux priv-esc — each applied/verified/reverted via Ansible — plus an Elastic + Sysmon detection stack to drill blue-team detection on the same scenarios.
@@ -154,6 +159,7 @@ ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
 
 - **[Getting Started Guide](./docs/GETTING_STARTED.md)** — complete step-by-step setup for new operators
 - **[Web Application Guide](./webapp/README.md)** — the browser control plane
+- **[Mission Control](./docs/MISSION_CONTROL.md)** — live fleet-health monitoring (active probes, scheduler, alerts, history)
 - **[Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md)** — full Dashboard Server architecture
 - **[Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md)** — the single-jump access model
 - **[Access Methods](./docs/ACCESS_METHODS.md)** — every way to reach deployed instances
@@ -190,6 +196,7 @@ ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
 > This platform automates offensive-security tooling and is intended **only for lawful, authorized red-team engagements and training**. Ensure you have explicit permission before deploying.
 
 - **Single SSH entry point** — the Dashboard Server, gated by SSH key + IP allow-list.
+- **Per-operator identity & attribution** — on the shared Dashboard Server each operator is identified *server-side* from the SSH-key OS user (kernel peer credential + a signed token), so state-changing actions are attributed in the audit log and cannot be spoofed from the browser.
 - **Least-privilege IAM** — the Dashboard Server uses an IAM instance role; no static AWS keys live on operator laptops.
 - **Secrets in AWS Secrets Manager** — team-server and host credentials are never committed to source.
 - **Network isolation** — C2 servers live in private subnets and are never directly internet-facing; redirectors front all callbacks.

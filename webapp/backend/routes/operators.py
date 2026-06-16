@@ -1,8 +1,11 @@
-"""Operator profile CRUD + cookie-based identity switching.
+"""Operator profile CRUD + identity display.
 
-Identity is asserted by an unsigned `dashboard_operator` cookie. The
-trust boundary is upstream (AWS IAM + SSH access to the dashboard) —
-see Decision #23 in docs/internal/STATUS_DEEP_DIVE_2026-05-16.md.
+Identity is AUTHENTICATED, not self-asserted: the `dashboard_operator` cookie
+holds an HMAC-signed token minted by the SO_PEERCRED socket and bound to the
+operator's SSH-authenticated Linux user (see services/identity_token.py +
+peercred_identity.py). In production `/switch` is therefore disabled (the chip
+is display-only); in dev (no peercred socket) switching is allowed but still
+stored as a signed token. No unsigned cookie is ever written or trusted in prod.
 """
 from flask import Blueprint, request, jsonify, make_response, g
 from webapp.backend.services import operator_service, audit_service
@@ -34,6 +37,9 @@ def list_all():
         "operators": operators,
         "current": current,
         "default": operator_service.get_default(),
+        # In prod, identity is SSH-key-bound and NOT switchable — the frontend
+        # renders the chip display-only when this is False.
+        "switchable": operator_service.is_dev_mode(),
     })
 
 
@@ -94,8 +100,17 @@ def remove(op_id):
 
 @bp.route("/switch", methods=["POST"])
 def switch():
-    """Set the dashboard_operator cookie. Cookie is unsigned by design — trust
-    is upstream (IAM/SSH). 1-year persistence."""
+    """Operator identity is now AUTHENTICATED (bound to the SSH-key Linux user
+    via the SO_PEERCRED-minted signed token), so it is no longer switchable in
+    production — the header chip is display-only. In dev (single local user) we
+    still allow a switch for convenience, but the value is wrapped in a signed
+    token so it flows through the same verified path as prod."""
+    if not operator_service.is_dev_mode():
+        return jsonify({
+            "success": False,
+            "error": "operator identity is bound to your SSH key and cannot be switched",
+        }), 403
+
     data = request.get_json(silent=True) or {}
     op_id = data.get("id")
     op = operator_service.get(op_id)
@@ -103,12 +118,16 @@ def switch():
         return jsonify({"success": False, "error": f"unknown operator '{op_id}'"}), 400
     actor = getattr(g, "operator", None) or {"id": "unknown"}
     audit_service.write(actor.get("id"), "operator.switch", target=op_id)
+    # Even in dev, store a SIGNED token (not a bare id) so the cookie always
+    # flows through identity_token.verify — no unsigned path remains.
+    from webapp.backend.services import identity_token
     resp = make_response(jsonify({"success": True, "current": op}))
     resp.set_cookie(
         "dashboard_operator",
-        op_id,
-        max_age=60 * 60 * 24 * 365,
-        samesite="Lax",
+        identity_token.mint(op_id),
+        max_age=identity_token.TTL_DEFAULT,
+        httponly=True,
+        samesite="Strict",
         path="/",
     )
     return resp

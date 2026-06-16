@@ -268,6 +268,12 @@
                     <span class="app-rail__label">Dashboard</span>
                 </button>
 
+                <!-- Mission Control — glanceable runtime health of the live fleet -->
+                <button class="app-rail__item" type="button"
+                        data-rail-target="mission-control">
+                    <span class="app-rail__label">Mission Control</span>
+                </button>
+
                 <!-- Deployments -->
                 <div class="app-rail__group" data-rail-group="deployments-tab">
                     <button class="app-rail__item app-rail__item--has-children" type="button"
@@ -350,11 +356,11 @@
              Lives outside the header so it can escape any overflow clipping. -->
         <div class="operator-menu" id="operator-menu" role="menu" hidden>
             <div class="operator-menu__section">
-                <div class="operator-menu__label">Switch operator</div>
+                <div class="operator-menu__label" id="operator-menu-label">Switch operator</div>
                 <div id="operator-menu-list"></div>
             </div>
-            <div class="operator-menu__divider"></div>
-            <div class="operator-menu__section">
+            <div class="operator-menu__divider" id="operator-menu-divider"></div>
+            <div class="operator-menu__section" id="operator-menu-actions">
                 <button class="operator-menu__action" id="operator-menu-add" type="button" role="menuitem">
                     <span class="operator-menu__action-icon">+</span>
                     Add operator&hellip;
@@ -440,6 +446,11 @@
                         role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('operations')">
                         <span class="demo-stepper__marker" aria-hidden="true">5</span>
                         <span class="demo-stepper__label">Operations</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="mission-control"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('mission-control')">
+                        <span class="demo-stepper__marker" aria-hidden="true">6</span>
+                        <span class="demo-stepper__label">Mission Control</span>
                     </li>
                     <li class="demo-stepper__node" data-demo-step="done"
                         role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('done')">
@@ -674,6 +685,16 @@
                     <p class="t-muted dashboard-elastic-rules-help">
                         Pulls latest Elastic SIEM detection rules from GitHub and regenerates the OPSEC command mappings.
                     </p>
+                </section>
+            </div>
+
+            <!-- Mission Control — single-pane runtime overview of everything live.
+                 Body is rendered by APP.missionControl.render() into #mission-control-body. -->
+            <div class="tab-page" data-page="mission-control" style="display: none;">
+                <section class="mc-pane" aria-label="Mission Control">
+                    <div id="mission-control-body">
+                        <!-- rendered by APP.missionControl -->
+                    </div>
                 </section>
             </div>
 

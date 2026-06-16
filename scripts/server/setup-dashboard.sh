@@ -507,14 +507,63 @@ ExecStart=/opt/redteam/venv/bin/python3 webapp/backend/app.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Pin HOME so the identity secret + operator store land deterministically under
+# /opt/redteam/.dashboard (writable via ReadWritePaths) rather than relying on
+# systemd's HOME inference for the `dashboard` account.
+Environment=HOME=/opt/redteam
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/opt/redteam
 PrivateTmp=true
+# Operator-identity socket — systemd creates /run/redteam (dashboard:redteam,
+# 0750) so the SO_PEERCRED identity minter can bind its socket there and
+# operator users (group redteam) can connect to mint their signed token.
+RuntimeDirectory=redteam
+RuntimeDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
+
+# redteam-token — operator-run client that mints THIS operator's single-use login
+# code via the SO_PEERCRED socket (bound to the SSH-authenticated uid; unforgeable).
+sudo tee /usr/local/bin/redteam-token > /dev/null <<'TOKBIN'
+#!/usr/bin/env python3
+import socket, sys
+SOCK = "/run/redteam/identity.sock"
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(3)
+    s.connect(SOCK)
+    data = s.recv(8192).decode("utf-8", "replace").strip()
+    s.close()
+except Exception as e:
+    sys.stderr.write("redteam-token: cannot reach identity socket (%s)\n" % e)
+    sys.exit(1)
+if not data:
+    sys.stderr.write("redteam-token: not recognised as an operator on this host\n")
+    sys.exit(1)
+sys.stdout.write(data)
+TOKBIN
+sudo chmod 0755 /usr/local/bin/redteam-token
+
+# Interactive-login hook: print the ready signed login URL on SSH login.
+sudo tee /etc/profile.d/redteam-login.sh > /dev/null <<'PROFILE'
+case $- in
+  *i*)
+    if [ -S /run/redteam/identity.sock ]; then
+      _RT_CODE="$(/usr/local/bin/redteam-token 2>/dev/null || true)"
+      if [ -n "$_RT_CODE" ]; then
+        echo "Mission dashboard — forward the port, then open the single-use login URL:"
+        echo "  ssh -L 5000:localhost:5000 $USER@<dashboard-eip>"
+        echo "  http://localhost:5000/login?c=$_RT_CODE"
+      fi
+      unset _RT_CODE
+    fi
+    ;;
+esac
+PROFILE
+sudo chmod 0644 /etc/profile.d/redteam-login.sh
 
 sudo hostnamectl set-hostname redteam-dashboard 2>/dev/null || true
 sudo systemctl daemon-reload
@@ -551,7 +600,8 @@ REMOTE_SVC
         echo "============================================"
         echo ""
         echo "  IP:       $DASHBOARD_IP"
-        echo "  Connect:  ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP"
+        echo "  Connect:  ./scripts/server/connect-dashboard.sh $OPERATOR_NAME@$DASHBOARD_IP   # tunnels + signs you in"
+        echo "  Manual:   ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP   # then open the login URL printed on login"
         echo "  Open:     http://localhost:5000"
         echo ""
         echo "  Configure + deploy in the browser. Full walkthrough: docs/GETTING_STARTED.md"
@@ -979,10 +1029,53 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/opt/redteam
 PrivateTmp=true
+# Operator-identity socket dir (dashboard:redteam, 0750) for the SO_PEERCRED minter.
+RuntimeDirectory=redteam
+RuntimeDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
+
+# redteam-token — operator-run client that mints THIS operator's single-use login
+# code via the SO_PEERCRED socket (bound to the SSH-authenticated uid; unforgeable).
+sudo tee /usr/local/bin/redteam-token > /dev/null <<'TOKBIN'
+#!/usr/bin/env python3
+import socket, sys
+SOCK = "/run/redteam/identity.sock"
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(3)
+    s.connect(SOCK)
+    data = s.recv(8192).decode("utf-8", "replace").strip()
+    s.close()
+except Exception as e:
+    sys.stderr.write("redteam-token: cannot reach identity socket (%s)\n" % e)
+    sys.exit(1)
+if not data:
+    sys.stderr.write("redteam-token: not recognised as an operator on this host\n")
+    sys.exit(1)
+sys.stdout.write(data)
+TOKBIN
+sudo chmod 0755 /usr/local/bin/redteam-token
+
+# Interactive-login hook: print the ready signed login URL on SSH login.
+sudo tee /etc/profile.d/redteam-login.sh > /dev/null <<'PROFILE'
+case $- in
+  *i*)
+    if [ -S /run/redteam/identity.sock ]; then
+      _RT_CODE="$(/usr/local/bin/redteam-token 2>/dev/null || true)"
+      if [ -n "$_RT_CODE" ]; then
+        echo "Mission dashboard — forward the port, then open the single-use login URL:"
+        echo "  ssh -L 5000:localhost:5000 $USER@<dashboard-eip>"
+        echo "  http://localhost:5000/login?c=$_RT_CODE"
+      fi
+      unset _RT_CODE
+    fi
+    ;;
+esac
+PROFILE
+sudo chmod 0644 /etc/profile.d/redteam-login.sh
 
 sudo hostnamectl set-hostname redteam-dashboard 2>/dev/null || true
 sudo systemctl daemon-reload
@@ -1020,7 +1113,8 @@ echo "  Dashboard Server Ready!"
 echo "============================================"
 echo ""
 echo "  IP:       $DASHBOARD_IP"
-echo "  Connect:  ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP"
+echo "  Connect:  ./scripts/server/connect-dashboard.sh $OPERATOR_NAME@$DASHBOARD_IP   # tunnels + signs you in"
+echo "  Manual:   ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP   # then open the login URL printed on login"
 echo "  Open:     http://localhost:5000"
 echo ""
 echo "  Next steps (all in the browser at http://localhost:5000):"

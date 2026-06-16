@@ -112,6 +112,9 @@ const NAVIGATE_ALIASES = {
     'aws-check':     { parent: 'settings',      subPill: null, anchor: 'aws-prereqs-anchor' },
     // Unchanged tabs — keep as identity entries for completeness
     'dashboard':     { parent: 'dashboard',     subPill: null },
+    // Mission Control — top-level overview page (identity entry so a direct
+    // rail click resolves cleanly instead of falling back to dashboard).
+    'mission-control': { parent: 'mission-control', subPill: null },
     // M-Dashboard / Decision #21 — Architecture tab folded into Dashboard
     // widget + modal. Legacy navigateTo('architecture') callers now land on
     // the Dashboard tab AND open the Architecture modal. The `openModal`
@@ -357,7 +360,7 @@ const APP = {
     // It's now a modal launched from the Dashboard "Architecture" widget. Legacy
     // navigateTo('architecture') callers continue to work via NAVIGATE_ALIASES:
     // they land on Dashboard + auto-open the modal.
-    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'settings'],
+    pages: ['dashboard', 'mission-control', 'deployments-tab', 'operations-tab', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     // Dashboard Server EIP — the sole SSH/RDP jump host (the per-deployment
@@ -768,6 +771,11 @@ const APP = {
                 // APP._runSubPillInit at D4.5.
                 case 'settings':
                     initSettingsPage();
+                    break;
+                case 'mission-control':
+                    if (APP.missionControl && typeof APP.missionControl.render === 'function') {
+                        APP.missionControl.render();
+                    }
                     break;
                 case 'deployments-tab':
                     // D3.5 — Sub-pill init runs via APP.setActiveSubPill (called
@@ -3114,6 +3122,1232 @@ APP.toast = function (message, variant = 'info', duration = 4000) {
 // === end M-Redesign Agent 3 helpers ====================================
 
 /**
+ * Mission Control — single-pane runtime overview of the live fleet.
+ *
+ * Reads the cached runtime-probe results (Layer 2/3, /api/health/probes) and
+ * lays out a glanceable fleet status strip + one card per live deployment,
+ * each drillable into the existing TOPOLOGY canvas. Distinct from the Manage
+ * tab's "Host Setup Status" (which answers "did bootstrap run?") — this answers
+ * "is it healthy right now?": is the redirector proxying, is the decoy 200, is
+ * the cert about to expire, is the peering up.
+ *
+ * Self-cleaning: the refresh poll stops itself once the page is no longer the
+ * active .tab-page, so no navigateTo() leave-hook is needed.
+ */
+APP.missionControl = {
+    _pollInterval: null,
+    _pollMs: 30000,
+    _deployments: [],
+    _status: {},        // project -> probe payload (cached or fresh)
+    _topoMounted: {},   // project -> bool (don't re-mount the canvas on refresh)
+    _probing: {},       // project -> bool (a probe run is in flight)
+    _probeStart: {},    // project -> epoch ms when the in-flight probe started
+    _probeTicker: null, // shared 1s interval that refreshes the "checking… (Ns)" label
+    _schedulerRunning: false, // mirrors backend /scheduler state; drives the toggle label
+    _region: 'eu-central-1',
+    _showDemo: false,   // demo card is OFF by default — only via the Demo toggle
+    _demoDep: null,     // the synthetic demo deployment row, if present
+    _realCount: 0,      // number of REAL (non-demo) deployments
+    _view: 'overview',  // 'overview' | 'alerts'
+    _alertFilter: { severity: 'all', role: 'all' },
+    _alertsTab: 'active',  // 'active' | 'archived'
+    _historyCache: {},  // 'project::target' -> {series, uptime}
+
+    _isDemo(dep) {
+        if (!dep) return false;
+        return dep._filename === 'demo' || dep.is_demo === true || dep.deployment_type === 'demo';
+    },
+
+    // status -> presentation. Colours come from palette.css variables so both
+    // themes resolve correctly; dots use the solid semantic colour, text uses
+    // the theme-safe *-text variants.
+    _META: {
+        ok:      { cls: 'ok',      label: 'Healthy' },
+        warn:    { cls: 'warn',    label: 'Degraded' },
+        crit:    { cls: 'crit',    label: 'Critical' },
+        unknown: { cls: 'unknown', label: 'Unknown' },
+        na:      { cls: 'na',      label: 'N/A' },
+    },
+
+    _meta(status) { return this._META[status] || this._META.unknown; },
+
+    _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    },
+
+    async render() {
+        const body = document.getElementById('mission-control-body');
+        if (!body) return;
+
+        // Loading skeleton (taste Rule 5 — never a bare spinner).
+        body.innerHTML = this._shell(this._skeleton());
+        this._bind(body);
+
+        let real = [];
+        try {
+            const r = await fetch('/api/deploy/active');
+            const j = await r.json();
+            const all = (j.deployments || []).filter(d => d && d._filename && d.status === 'success');
+            // REAL fleet only. The synthetic `demo` is NEVER shown unless the
+            // operator explicitly flips the Demo toggle (off by default).
+            real = all.filter(d => !this._isDemo(d));
+            this._demoDep = all.find(d => this._isDemo(d)) || null;
+        } catch (e) {
+            body.innerHTML = this._shell(
+                `<div class="status-display error">Could not load deployments: ${this._esc(e.message)}</div>`);
+            this._bind(body);
+            return;
+        }
+
+        // Demo mode is EXCLUSIVE: when on, Mission Control shows ONLY the
+        // synthetic demo — no real deployments mixed in. It turns on via the
+        // "Show demo" toggle, OR automatically when the guided walkthrough
+        // (APP.demo) is running, OR when 'demo' is the active deployment.
+        const guidedDemo = !!(APP.demo && APP.demo.active);
+        const activeDemo = !!(APP.activeDeployment && APP.activeDeployment.current === 'demo');
+        this._demoMode = (this._showDemo || guidedDemo || activeDemo) && !!this._demoDep;
+        const deployments = this._demoMode ? [this._demoDep] : real.slice();
+        this._deployments = deployments;
+        this._realCount = real.length;
+
+        if (deployments.length === 0) {
+            body.innerHTML = this._shell(this._emptyState());
+            this._bind(body);
+            return;
+        }
+
+        // Pull cached probe status for each deployment in parallel.
+        await Promise.all(deployments.map(async (d) => {
+            try {
+                const r = await fetch(`/api/health/probes/status?project=${encodeURIComponent(d._filename)}`);
+                const j = await r.json();
+                this._status[d._filename] = j;
+            } catch (_) {
+                this._status[d._filename] = null;
+            }
+        }));
+
+        if (this._view === 'alerts') {
+            body.innerHTML = this._shell(
+                this._demoBanner() + this._viewTabs() +
+                `<div id="mc-alerts-body"><div class="mc-host-row mc-host-row--empty">Loading alerts…</div></div>`);
+            this._bind(body);
+            this._refreshScheduler();
+            this._startPoll();
+            this._loadAlerts();
+            return;
+        }
+
+        // Pre-load per-host 24h history (status sparkline + uptime %) so rows
+        // render with the trend already in place (one parallel batch per render,
+        // not per poll).
+        await this._loadHistories(deployments);
+
+        body.innerHTML = this._shell(
+            this._demoBanner() + this._viewTabs() + this._fleetStrip() + this._topologyOverview() +
+            `<div class="mc-deployments">` +
+            deployments.map(d => this._card(d)).join('') + `</div>`);
+        this._bind(body);
+        this._mountOverviewTopology();   // mount the interactive draggable canvas
+        this._refreshScheduler();
+        this._startPoll();
+        this._autoProbeStale();          // self-populate: probe stale/never-probed deployments
+    },
+
+    // Overview | Alerts view switcher. Alert count = current non-ok targets
+    // across the shown deployments (cheap; computed from cached status).
+    _viewTabs() {
+        let crit = 0, warn = 0;
+        this._deployments.forEach(d => {
+            const p = this._status[d._filename] || {};
+            (p.hosts || []).concat(p.fabric || []).forEach(t => {
+                if (t.status === 'crit') crit++; else if (t.status === 'warn') warn++;
+            });
+        });
+        const n = crit + warn;
+        const badge = n ? `<span class="mc-viewtab__badge${crit ? ' mc-viewtab__badge--crit' : ''}">${n}</span>` : '';
+        const tab = (id, label, extra) =>
+            `<button class="mc-viewtab${this._view === id ? ' is-active' : ''}" data-mc-action="view" data-mc-view="${id}">${label}${extra || ''}</button>`;
+        return `<div class="mc-viewtabs">${tab('overview', 'Overview')}${tab('alerts', 'Alerts', ' ' + badge)}</div>`;
+    },
+
+    async _loadAlerts() {
+        const host = document.getElementById('mc-alerts-body');
+        if (!host) return;
+        const projects = this._deployments.map(d => d._filename);
+        const alerts = [];
+        const events = [];
+        const archived = [];
+        await Promise.all(projects.map(async (p) => {
+            try {
+                const [a, e, ar] = await Promise.all([
+                    fetch(`/api/health/probes/alerts?project=${encodeURIComponent(p)}`).then(r => r.json()),
+                    fetch(`/api/health/probes/events?project=${encodeURIComponent(p)}`).then(r => r.json()),
+                    fetch(`/api/health/probes/alerts/archive?project=${encodeURIComponent(p)}`).then(r => r.json()),
+                ]);
+                (a.alerts || []).forEach(x => alerts.push({ ...x, project: p }));
+                (e.events || []).forEach(x => events.push({ ...x, project: p }));
+                (ar.archived || []).forEach(x => archived.push({ ...x, project: p }));
+            } catch (_) { /* skip */ }
+        }));
+        events.sort((a, b) => b.ts - a.ts);
+        archived.sort((a, b) => b.ts - a.ts);
+        this._alertsData = alerts;
+        this._eventsData = events;
+        this._archivedData = archived;
+        this._renderAlertsBody();
+    },
+
+    _renderAlertsBody() {
+        const host = document.getElementById('mc-alerts-body');
+        if (!host) return;
+        const f = this._alertFilter || (this._alertFilter = { severity: 'all', role: 'all' });
+        let alerts = this._alertsData || [];
+        const roles = [...new Set(alerts.map(a => a.role).filter(Boolean))];
+        if (f.severity !== 'all') alerts = alerts.filter(a => a.severity === f.severity);
+        if (f.role !== 'all') alerts = alerts.filter(a => a.role === f.role);
+        // Sort by severity (crit first), then most recent.
+        const sevRank = { crit: 0, warn: 1 };
+        alerts = alerts.slice().sort((a, b) =>
+            (sevRank[a.severity] ?? 2) - (sevRank[b.severity] ?? 2) || (b.ts - a.ts));
+
+        const sevBtn = (v, label) =>
+            `<button class="mc-filter${f.severity === v ? ' is-active' : ''}" data-mc-action="alert-filter" data-mc-fkey="severity" data-mc-fval="${v}">${label}</button>`;
+        const roleOpts = ['all', ...roles].map(r =>
+            `<option value="${this._esc(r)}"${f.role === r ? ' selected' : ''}>${r === 'all' ? 'All roles' : this._esc(r)}</option>`).join('');
+
+        const tab = this._alertsTab || 'active';
+        const archived = this._archivedData || [];
+        const subTab = (id, label, n) =>
+            `<button class="mc-filter${tab === id ? ' is-active' : ''}" data-mc-action="alerts-tab" data-mc-tab="${id}">${label}${n ? ` (${n})` : ''}</button>`;
+
+        // Active alerts — each clearable (→ archive).
+        const alertRows = alerts.length ? alerts.map(a => {
+            const m = this._meta(a.severity);
+            const enc = encodeURIComponent;
+            return `
+              <div class="mc-alert-row">
+                <span class="mc-dot mc-dot--${m.cls}"></span>
+                <span class="mc-alert-row__name">${this._esc(a.name)}</span>
+                <span class="badge badge-info mc-alert-row__role">${this._esc(a.role || a.kind || '')}</span>
+                <span class="mc-alert-row__reason">${this._esc(a.reason || '')}</span>
+                <span class="mc-alert-row__meta mc-mono">${this._esc(a.project)} · ${m.label.toLowerCase()} for ${this._durSince(a.since || a.ts)}</span>
+                <button class="mc-clear" data-mc-action="alert-clear" data-mc-aproject="${this._esc(a.project)}" data-mc-atarget="${this._esc(a.target_id)}" data-mc-astatus="${this._esc(a.severity)}" data-mc-aname="${this._esc(a.name)}" data-mc-arole="${this._esc(a.role || '')}" data-mc-areason="${this._esc(a.reason || '')}">Clear</button>
+              </div>`;
+        }).join('') : `<div class="mc-host-row mc-host-row--empty">No active alerts — all clear.</div>`;
+
+        // Archived (cleared) alerts.
+        const archiveRows = archived.length ? archived.map(a => {
+            const m = this._meta(a.status);
+            return `
+              <div class="mc-alert-row mc-alert-row--archived">
+                <span class="mc-dot mc-dot--${m.cls}"></span>
+                <span class="mc-alert-row__name">${this._esc(a.name || a.target_id)}</span>
+                <span class="badge badge-info mc-alert-row__role">${this._esc(a.role || '')}</span>
+                <span class="mc-alert-row__reason">${this._esc(a.reason || (a.role || '') + ' was ' + a.status)}</span>
+                <span class="mc-alert-row__meta mc-mono">cleared by ${this._esc(a.cleared_by || '—')} · ${this._ago(new Date(a.ts * 1000).toISOString())}</span>
+              </div>`;
+        }).join('') : `<div class="mc-host-row mc-host-row--empty">Nothing archived yet.</div>`;
+
+        const timeline = (this._eventsData || []).slice(0, 40).map(e => {
+            const tm = this._meta(e.to_status);
+            return `
+              <div class="mc-tl-row">
+                <span class="mc-tl-row__time mc-mono">${this._esc(this._ago(new Date(e.ts * 1000).toISOString()))}</span>
+                <span class="mc-dot mc-dot--${tm.cls}"></span>
+                <span class="mc-tl-row__name">${this._esc(e.name)}</span>
+                <span class="mc-tl-row__trans"><span class="mc-mono">${this._esc(e.from_status)}</span> → <span class="mc-mono">${this._esc(e.to_status)}</span></span>
+                <span class="mc-tl-row__meta">${this._esc(e.project)}</span>
+              </div>`;
+        }).join('') || `<div class="mc-host-row mc-host-row--empty">No status changes recorded yet.</div>`;
+
+        const activeBar = tab === 'active' ? `
+            <div class="mc-alerts__bar">
+              <span class="mc-alerts__filterlabel">Severity</span>
+              ${sevBtn('all', 'All')}${sevBtn('crit', 'Critical')}${sevBtn('warn', 'Degraded')}
+              <select class="mc-topo-select mc-alerts__role" data-mc-action="alert-role">${roleOpts}</select>
+              ${alerts.length ? `<button class="mc-clear mc-clear--all" data-mc-action="alert-clear-all">Clear all</button>` : ''}
+            </div>` : '';
+
+        host.innerHTML = `
+          <div class="mc-alerts">
+            <div class="mc-alerts__subtabs">
+              ${subTab('active', 'Active', alerts.length)}${subTab('archived', 'Archived', archived.length)}
+            </div>
+            ${activeBar}
+            <div class="mc-alerts__list">${tab === 'active' ? alertRows : archiveRows}</div>
+            ${tab === 'archived'
+                ? `<h3 class="mc-section-title mc-alerts__tlhead">Incident timeline</h3><div class="mc-timeline">${timeline}</div>`
+                : ''}
+          </div>`;
+    },
+
+    async _clearAlert(ds) {
+        try {
+            await fetch('/api/health/probes/alerts/clear', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project: ds.aproject, target_id: ds.atarget, status: ds.astatus,
+                    name: ds.aname, role: ds.arole, reason: ds.areason,
+                }),
+            });
+        } catch (_) { /* best-effort */ }
+    },
+
+    async _clearAlerts(list) {
+        await Promise.all(list.map(ds => this._clearAlert(ds)));
+        await this._loadAlerts();   // re-pull active + archive
+        this._patchFleetStrip(); this._patchFleetMap();
+    },
+
+    _patchFleetMap() {
+        const spokes = document.querySelector('.mc-fleet-map__spokes');
+        if (!spokes) return;
+        spokes.innerHTML = this._deployments.map(d => this._vpcCluster(d)).join('');
+    },
+
+    // ── history visualization (uptime % + status sparkline + response time) ──
+
+    async _loadHistories(deployments) {
+        const tasks = [];
+        deployments.forEach(d => {
+            const hosts = (this._status[d._filename] || {}).hosts || [];
+            hosts.forEach(h => {
+                const tid = h.instance_id || h.name;
+                if (!tid) return;
+                tasks.push(fetch(`/api/health/probes/history?project=${encodeURIComponent(d._filename)}&target=${encodeURIComponent(tid)}&window=86400`)
+                    .then(r => r.json())
+                    .then(j => { this._historyCache[d._filename + '::' + tid] = j; })
+                    .catch(() => {}));
+            });
+        });
+        await Promise.all(tasks);
+    },
+
+    _hist(project, h) {
+        return this._historyCache[project + '::' + (h.instance_id || h.name)];
+    },
+
+    // Gatus-style status sparkline — a row of coloured ticks (oldest→newest).
+    _sparkline(series, max = 40) {
+        const s = (series || []).slice(-max);
+        if (!s.length) return '';
+        const ticks = s.map(p =>
+            `<span class="mc-spark__t mc-spark__t--${this._meta(p.status).cls}"></span>`).join('');
+        return `<span class="mc-spark" title="last ${s.length} checks (24h)">${ticks}</span>`;
+    },
+
+    _uptimeBadge(hist) {
+        const p = hist && hist.uptime ? hist.uptime.uptime_pct : null;
+        if (p == null) return '';
+        const cls = p >= 99 ? 'ok' : (p >= 95 ? 'warn' : 'crit');
+        return `<span class="mc-uptime mc-uptime--${cls} mc-mono" title="24h uptime">${p}%</span>`;
+    },
+
+    // Inline SVG response-time trend (for the Investigate drawer).
+    _responseTrend(series) {
+        const pts = (series || []).map(p => p.response_ms).filter(v => v != null && v >= 0);
+        if (pts.length < 2) return '';
+        const w = 460, hgt = 56, pad = 4;
+        const max = Math.max(...pts), min = Math.min(...pts);
+        const span = max - min || 1;
+        const step = (w - pad * 2) / (pts.length - 1);
+        const path = pts.map((v, i) => {
+            const x = pad + i * step;
+            const y = pad + (hgt - pad * 2) * (1 - (v - min) / span);
+            return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const last = pts[pts.length - 1];
+        return `
+          <svg class="mc-rt" viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" role="img" aria-label="response time trend">
+            <path d="${path}" fill="none" stroke="var(--info)" stroke-width="1.5"/>
+          </svg>
+          <div class="mc-rt__meta mc-mono">${last} ms now · ${min}–${max} ms (24h)</div>`;
+    },
+
+    // Prominent scenario switcher shown ONLY in demo mode — the whole page
+    // (fleet strip + VPC map + card) re-paints to the chosen state so you can
+    // see Healthy / Degraded / Critical end to end.
+    _demoBanner() {
+        if (!this._demoMode) return '';
+        const cur = (this._status['demo'] || {}).demo_state || 'healthy';
+        const guided = !!(APP.demo && APP.demo.active);
+        const btns = ['healthy', 'degraded', 'critical'].map(s =>
+            `<button class="mc-demo-seg__btn${cur === s ? ' is-active' : ''}" data-mc-action="demo-state" data-mc-state="${s}" data-mc-project="demo">${s}</button>`).join('');
+        return `
+          <div class="mc-demo-banner">
+            <span class="badge mc-card__demo">DEMO</span>
+            <span class="mc-demo-banner__text">Synthetic showcase — preview each health state</span>
+            <div class="mc-demo-seg" role="group" aria-label="Demo scenario">${btns}</div>
+            ${guided ? '' : `<button class="btn btn-secondary btn-sm mc-demo-banner__exit" data-mc-action="toggle-demo">Exit demo</button>`}
+          </div>`;
+    },
+
+    _patchDemoBanner() {
+        const banner = document.querySelector('.mc-demo-banner');
+        if (!banner) return;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = this._demoBanner();
+        if (tmp.firstElementChild) banner.replaceWith(tmp.firstElementChild);
+    },
+
+    // Auto-probe on entry so the page is never a dead "never probed" wall.
+    // Only fires for real deployments whose cache is missing or older than 60s
+    // (the demo is in-process/instant, so it's skipped).
+    _autoProbeStale() {
+        const STALE_MS = 60000;
+        this._deployments.forEach(d => {
+            if (this._isDemo(d)) return;
+            const p = this._status[d._filename] || {};
+            const ts = p.checked_at ? Date.parse(p.checked_at) : 0;
+            const stale = !ts || (Date.now() - ts) > STALE_MS;
+            if (stale && !this._probing[d._filename]) {
+                this._runProbe(d._filename, null);   // fire-and-forget; patches card on done
+            }
+        });
+    },
+
+    // ── live topology overview (everything running, default-mounted) ─────
+
+    _overviewProject: null,
+
+    // Live Topology has TWO complementary views:
+    //  (1) Fleet VPC map — static hub-and-spoke of EVERY deployment's VPC at
+    //      once (Dashboard hub + one labelled VPC cluster per deployment).
+    //  (2) Interactive map — the rich draggable/pan/zoom canvas (TOPOLOGY),
+    //      per-deployment via the selector. Both are pure-DOM / canvas and
+    //      dual-theme. (Per-card "Topology" buttons also drill into the canvas.)
+    _topologyOverview() {
+        if (!this._deployments.length) return '';
+        const spokes = this._deployments.map(d => this._vpcCluster(d)).join('');
+        if (!this._overviewProject
+            || !this._deployments.find(d => d._filename === this._overviewProject)) {
+            this._overviewProject = this._deployments[0]._filename;
+        }
+        const selector = this._deployments.length > 1
+            ? `<select class="mc-topo-select" data-mc-action="overview-select" aria-label="Interactive topology deployment">
+                 ${this._deployments.map(d => `<option value="${this._esc(d._filename)}"${
+                    d._filename === this._overviewProject ? ' selected' : ''}>${this._esc(d._filename)}${
+                    this._isDemo(d) ? ' (demo)' : ''}</option>`).join('')}
+               </select>`
+            : '';
+        return `
+          <section class="mc-topo-overview">
+            <div class="mc-topo-overview__head">
+              <h3 class="mc-section-title">Live Topology — all VPCs</h3>
+              <span class="mc-section-sub">Every deployment is its own VPC, peered to the Dashboard Server</span>
+            </div>
+            <div class="mc-fleet-map">
+              <div class="mc-vpc mc-vpc--hub">
+                <header class="mc-vpc__head">
+                  <span class="mc-dot mc-dot--ok" aria-hidden="true"></span>
+                  <span class="mc-vpc__name">Dashboard Server</span>
+                  <span class="mc-vpc__cidr">VPC 10.100.0.0/16</span>
+                </header>
+                <div class="mc-vpc__hubnote">Sole SSH/RDP jump · control plane · peered to every deployment below</div>
+              </div>
+              <div class="mc-fleet-map__bus" aria-hidden="true"></div>
+              <div class="mc-fleet-map__spokes">${spokes}</div>
+            </div>
+            <div class="mc-topo-interactive">
+              <div class="mc-topo-overview__head">
+                <h3 class="mc-section-title">Interactive map</h3>
+                <span class="mc-section-sub">Drag · pan · zoom</span>
+                <span class="mc-health-legend" aria-label="Node health key">
+                  <span class="mc-health-legend__item"><span class="mc-dot mc-dot--ok"></span>healthy</span>
+                  <span class="mc-health-legend__item"><span class="mc-dot mc-dot--warn"></span>degraded</span>
+                  <span class="mc-health-legend__item"><span class="mc-dot mc-dot--crit"></span>critical</span>
+                </span>
+                ${selector}
+              </div>
+              <div id="mc-topo-overview-mount" class="mc-topo-overview__mount"></div>
+            </div>
+          </section>`;
+    },
+
+    _mountOverviewTopology() {
+        const host = document.getElementById('mc-topo-overview-mount');
+        if (!host || !this._overviewProject) return;
+        if (typeof TOPOLOGY === 'undefined' || typeof TOPOLOGY.mountInline !== 'function') {
+            host.innerHTML = '<div class="status-display info">Topology renderer unavailable.</div>';
+            return;
+        }
+        host.innerHTML = '';
+        // Feed runtime-probe health into the canvas so infra nodes colour by
+        // status (set on the global; mountInline's Object.create instance reads
+        // it via the prototype chain).
+        TOPOLOGY._mcHealth = this._topoHealthMap(this._overviewProject);
+        try { TOPOLOGY.mountInline(host, this._overviewProject); }
+        catch (e) { host.innerHTML = `<div class="status-display error">Topology unavailable: ${this._esc(e.message)}</div>`; }
+    },
+
+    // {instance_id|ip -> status} for the canvas health overlay, from a project's
+    // probe hosts. Keyed by instance_id AND both IPs so a canvas node resolves
+    // however it's identified (no IP-collision ambiguity).
+    _topoHealthMap(project) {
+        const map = {};
+        const hosts = (this._status[project] || {}).hosts || [];
+        hosts.forEach(h => {
+            const st = h.status;
+            if (h.instance_id) map[h.instance_id] = st;
+            if (h.public_ip) map[h.public_ip] = st;
+            if (h.private_ip) map[h.private_ip] = st;
+        });
+        return map;
+    },
+
+    // Attached-extension metadata: label + whether it lives in its own peered
+    // VPC (GOAD/CCRTS) or inside the C2's own VPC (test_lab).
+    _EXT_META: {
+        test_lab: { label: 'Test Lab', peered: false },
+        goad:     { label: 'GOAD',     peered: true  },
+        ccrts:    { label: 'CCRTS',    peered: true  },
+    },
+
+    _vpcCluster(dep) {
+        const proj = dep._filename;
+        const payload = this._status[proj] || {};
+        const m = this._meta(payload.status || 'unknown');
+        const cidr = payload.vpc_cidr || '';
+        const isDemo = this._isDemo(dep);
+        const hosts = payload.hosts || [];
+        // Split core C2 fabric from attached extensions (test_lab / goad / ccrts).
+        const core = hosts.filter(h => !h.ext);
+        const extGroups = {};
+        hosts.filter(h => h.ext).forEach(h => { (extGroups[h.ext] = extGroups[h.ext] || []).push(h); });
+        const extKeys = Object.keys(extGroups);
+        // A pure GOAD/CCRTS-only deployment has no core C2 — render its hosts as
+        // the main box body rather than as sub-boxes hanging off an empty parent.
+        const bodyHosts = core.length ? core : hosts;
+        const useExt = core.length && extKeys.length;
+        // DMZ = redirectors; Private = everything else in the core box.
+        const dmz = bodyHosts.filter(h => (h.role || '').toLowerCase() === 'redirector');
+        const priv = bodyHosts.filter(h => (h.role || '').toLowerCase() !== 'redirector');
+        const tier = (label, list) => list.length ? `
+              <div class="mc-vpc__tier">
+                <span class="mc-vpc__tier-label">${label}</span>
+                <div class="mc-vpc__hosts">${list.map(h => this._vpcHost(h)).join('')}</div>
+              </div>` : '';
+        const body = (dmz.length || priv.length)
+            ? tier('DMZ', dmz) + tier('Private', priv)
+            : `<div class="mc-vpc__empty">${this._probing[proj] ? 'checking…' : 'not probed yet'}</div>`;
+        const extHtml = useExt ? `
+            <div class="mc-vpc-ext__bus" aria-hidden="true"></div>
+            <div class="mc-vpc-ext__boxes">
+              ${extKeys.map(k => this._extBox(k, extGroups[k])).join('')}
+            </div>` : '';
+        return `
+          <div class="mc-vpc-group">
+            <article class="mc-vpc mc--${m.cls}${isDemo ? ' mc-vpc--demo' : ''}">
+              <header class="mc-vpc__head">
+                <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>
+                <span class="mc-vpc__name" title="${this._esc(proj)}">${this._esc(proj)}</span>
+                ${isDemo ? '<span class="badge mc-card__demo">DEMO</span>' : ''}
+                <span class="mc-vpc__cidr">${this._esc(cidr ? 'VPC ' + cidr : 'VPC')}</span>
+                <span class="mc-vpc__peer">peered</span>
+              </header>
+              ${body}
+            </article>
+            ${extHtml}
+          </div>`;
+    },
+
+    // One attached-extension sub-box (its own dot = worst of its hosts, its own
+    // CIDR, and a peered/in-VPC tag reflecting the real network model).
+    _extBox(key, hosts) {
+        const meta = this._EXT_META[key] || { label: key, peered: true };
+        const m = this._meta(this._worst(hosts.map(h => h.status)));
+        const cidr = this._extCidr(key, hosts);
+        const tag = meta.peered
+            ? '<span class="mc-vpc__peer">peered</span>'
+            : '<span class="mc-vpc__tier-label mc-vpc-ext__inv">in-VPC</span>';
+        return `
+          <article class="mc-vpc-ext mc--${m.cls}">
+            <header class="mc-vpc-ext__head">
+              <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>
+              <span class="mc-vpc-ext__name">${this._esc(meta.label)}</span>
+              ${tag}
+            </header>
+            <div class="mc-vpc__hosts">${hosts.map(h => this._vpcHost(h)).join('')}</div>
+            ${cidr ? `<span class="mc-vpc__cidr mc-vpc-ext__cidr">${this._esc(cidr)}</span>` : ''}
+          </article>`;
+    },
+
+    // Derive the lab's /24 from a host private IP; fall back to the known default.
+    _extCidr(key, hosts) {
+        for (const h of hosts) {
+            const ip = (h.private_ip || '').split('.');
+            if (ip.length === 4) return `${ip[0]}.${ip[1]}.${ip[2]}.0/24`;
+        }
+        return ({ test_lab: '10.0.20.0/24', goad: '192.168.56.0/24', ccrts: '192.168.57.0/24' })[key] || '';
+    },
+
+    _vpcHost(h) {
+        const m = this._meta(h.status);
+        const role = (h.role || 'host');
+        return `<span class="mc-vpc__host" title="${this._esc(h.name || '')} ${this._esc(h.public_ip || h.private_ip || '')}">
+            <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>${this._esc(role)}</span>`;
+    },
+
+    // ── shell + sub-renderers ──────────────────────────────────────────
+
+    _shell(inner) {
+        return `
+          <div class="mc-header">
+            <div class="mc-header__titles">
+              <h2 class="mc-title">Mission Control</h2>
+              <p class="mc-subtitle">Live runtime health across every deployment — redirector proxy paths, decoy sites, TLS expiry, and peering.</p>
+            </div>
+            <div class="mc-header__meta">
+              <span class="mc-heartbeat" id="mc-heartbeat" title="Scheduler heartbeat (dead-man's switch)">scheduler: …</span>
+              ${(APP.demo && APP.demo.active) ? '' :
+                `<button class="btn btn-secondary btn-sm${this._demoMode ? ' is-active' : ''}" data-mc-action="toggle-demo" aria-pressed="${this._demoMode ? 'true' : 'false'}">${this._demoMode ? 'Exit demo' : 'Show demo'}</button>`}
+              <button class="btn btn-secondary btn-sm" id="mc-scheduler-btn" data-mc-action="toggle-scheduler" aria-pressed="false">Enable auto-checks</button>
+              <button class="btn btn-info btn-sm" data-mc-action="run-all">Run probes</button>
+            </div>
+          </div>
+          <div id="mc-inner">${inner}</div>`;
+    },
+
+    _skeleton() {
+        return `<div class="mc-skeleton">
+            <div class="mc-skel-strip"></div>
+            <div class="mc-skel-card"></div>
+            <div class="mc-skel-card"></div>
+          </div>`;
+    },
+
+    _emptyState() {
+        const demoHint = this._demoDep
+            ? `<button class="btn btn-secondary btn-sm" data-mc-action="toggle-demo">Show demo instead</button>` : '';
+        return `<div class="mc-empty">
+            <div class="mc-empty__mark" aria-hidden="true"></div>
+            <h3>No live deployments</h3>
+            <p>Once a deployment finishes, its redirectors, team servers and peering show up here with live health. The demo is synthetic and stays hidden unless you ask for it.</p>
+            <div class="mc-empty__actions">
+              <button class="btn btn-info btn-sm" data-mc-action="goto-deploy">Go to Deployments</button>
+              ${demoHint}
+            </div>
+          </div>`;
+    },
+
+    _fleetStrip() {
+        const statuses = this._deployments.map(d => (this._status[d._filename] || {}).status || 'unknown');
+        const rollup = this._worst(statuses);
+        let hosts = 0, degraded = 0, unmonitored = 0;
+        this._deployments.forEach(d => {
+            const s = this._status[d._filename] || {};
+            const sum = s.summary || {};
+            hosts += (sum.hosts || 0);
+            unmonitored += (sum.na || 0);
+            if (s.status === 'warn' || s.status === 'crit') degraded += 1;
+        });
+        const m = this._meta(rollup);
+        // Be honest that na/off-vantage hosts aren't actually verified — don't
+        // let a green rollup imply everything was checked.
+        const unmonPill = unmonitored
+            ? ` · <span class="mc-fleet-strip__unmon"><span class="mc-mono">${unmonitored}</span> unmonitored</span>` : '';
+        return `
+          <div class="mc-fleet-strip mc--${m.cls}">
+            <span class="mc-dot mc-dot--${m.cls} mc-dot--lg" aria-hidden="true"></span>
+            <div class="mc-fleet-strip__text">
+              <strong>${m.label}</strong>
+              <span class="mc-fleet-strip__counts">
+                <span class="mc-mono">${this._deployments.length}</span> deployments ·
+                <span class="mc-mono">${hosts}</span> hosts ·
+                <span class="mc-mono">${degraded}</span> degraded${unmonPill}
+              </span>
+            </div>
+            <div class="mc-legend">
+              <span class="mc-legend__item"><span class="mc-dot mc-dot--ok"></span>Healthy</span>
+              <span class="mc-legend__item"><span class="mc-dot mc-dot--warn"></span>Degraded</span>
+              <span class="mc-legend__item"><span class="mc-dot mc-dot--crit"></span>Critical</span>
+              <span class="mc-legend__item"><span class="mc-dot mc-dot--unknown"></span>Unknown</span>
+            </div>
+          </div>`;
+    },
+
+    _card(dep) {
+        const proj = dep._filename;
+        const payload = this._status[proj] || {};
+        const probing = !!this._probing[proj];
+        const status = payload.status || 'unknown';
+        const m = this._meta(status);
+        // While probing, show elapsed seconds so a slow vantage reads as "alive,
+        // working" rather than a dead spinner.
+        const elapsed = probing && this._probeStart[proj]
+            ? Math.max(0, Math.round((Date.now() - this._probeStart[proj]) / 1000)) : 0;
+        const checkedAt = probing ? `checking… (${elapsed}s)`
+            : (payload.checked_at ? this._ago(payload.checked_at) : 'never probed');
+        const hosts = payload.hosts || [];
+        const fabric = payload.fabric || [];
+        const emptyMsg = probing
+            ? `<div class="mc-host-row mc-host-row--empty">Checking redirectors, C2, peering and the decoy site…</div>`
+            : `<div class="mc-host-row mc-host-row--empty">No probe results yet — run probes to check this deployment.</div>`;
+        const hostRows = hosts.length
+            ? hosts.map(h => this._hostRow(h, proj)).join('')
+            : emptyMsg;
+        const fabricRows = fabric.map(f => this._fabricRow(f)).join('');
+
+        const isDemo = proj === 'demo' || dep.is_demo || dep.deployment_type === 'demo';
+        const typeLabel = isDemo ? (dep.models_deployment_type || 'c2-adhoc')
+                                 : (dep.deployment_type || 'unknown');
+        // The DEMO scenario switcher lives in the prominent banner (_demoBanner),
+        // not on the card, to avoid two switchers.
+        const demoBadge = isDemo ? `<span class="badge mc-card__demo">DEMO</span>` : '';
+
+        return `
+          <article class="mc-deployment-card mc--${m.cls}${isDemo ? ' mc-deployment-card--demo' : ''}" data-mc-project="${this._esc(proj)}">
+            <header class="mc-card__head">
+              <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>
+              <div class="mc-card__id">
+                <span class="mc-card__name">${this._esc(proj)}</span>
+                ${demoBadge}
+                <span class="badge badge-info mc-card__type">${this._esc(typeLabel)}</span>
+              </div>
+              <span class="mc-card__checked${probing ? ' mc-card__checked--probing' : ''}">${this._esc(checkedAt)}</span>
+              <div class="mc-card__actions">
+                <button class="btn btn-info btn-sm" data-mc-action="run" data-mc-project="${this._esc(proj)}">Run probes</button>
+                <button class="btn btn-secondary btn-sm" data-mc-action="topology" data-mc-project="${this._esc(proj)}" aria-expanded="false">Topology</button>
+              </div>
+            </header>
+            <div class="mc-hosts">${hostRows}${fabricRows}</div>
+            <div class="mc-topology" data-mc-topo="${this._esc(proj)}" hidden></div>
+          </article>`;
+    },
+
+    _hostRow(h, project) {
+        const m = this._meta(h.status);
+        const role = (h.role || 'host');
+        const ip = h.public_ip || h.private_ip || '';
+        const checks = (h.checks || []).map(c => this._chip(c)).join('');
+        const hist = this._hist(project, h);
+        const trend = hist ? `<span class="mc-host-row__trend">${this._uptimeBadge(hist)}${this._sparkline(hist.series)}</span>` : '';
+        // Offer "Investigate" on anything not clean — the drill into evidence + logs.
+        const investigate = (h.status === 'warn' || h.status === 'crit')
+            ? `<button class="mc-investigate mc-investigate--${m.cls}" data-mc-action="investigate" data-mc-project="${this._esc(project || '')}" data-mc-host="${this._esc(h.instance_id || h.name || '')}" title="Open evidence, on-host logs & SSM commands for ${this._esc(h.name || role)}">
+                 <svg class="mc-investigate__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="20" y1="20" x2="15.5" y2="15.5"/></svg>
+                 <span>Investigate</span>
+               </button>`
+            : '';
+        return `
+          <div class="mc-host-row">
+            <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>
+            <span class="mc-host-row__role">${this._esc(role)}</span>
+            <span class="mc-host-row__name">${this._esc(h.name || '')}</span>
+            <span class="mc-host-row__ip mc-mono">${this._esc(ip)}</span>
+            ${trend}
+            <span class="mc-checks">${checks}</span>
+            ${investigate}
+          </div>`;
+    },
+
+    _fabricRow(f) {
+        const m = this._meta(f.status);
+        const checks = (f.checks || []).map(c => this._chip(c)).join('');
+        return `
+          <div class="mc-host-row mc-host-row--fabric">
+            <span class="mc-dot mc-dot--${m.cls}" aria-hidden="true"></span>
+            <span class="mc-host-row__role">${this._esc(f.label || f.id)}</span>
+            <span class="mc-host-row__name mc-host-row__name--muted">${this._esc(f.kind || '')}</span>
+            <span class="mc-host-row__ip"></span>
+            <span class="mc-checks">${checks}</span>
+          </div>`;
+    },
+
+    _chip(c) {
+        const m = this._meta(c.status);
+        return `<span class="mc-chip mc-chip--${m.cls}" title="${this._esc(c.detail || '')}">${this._esc(c.id)}</span>`;
+    },
+
+    // ── investigation drawer (logs + evidence for a failing host) ────────
+
+    // Where the useful signal lives, per role. Redirector nginx access logs are
+    // OFF by design (OPSEC) — journalctl is the runtime signal there.
+    _logTargets(role) {
+        const r = (role || '').toLowerCase();
+        if (r === 'redirector') return [
+            { label: 'Redirector bootstrap', path: '/var/log/redirector-setup.log' },
+            { label: 'TLS / cert status', path: '/opt/ssl-status.json' },
+            { label: 'Setup status', path: '/opt/setup-status.json' },
+            { label: 'nginx service (access_log is off — OPSEC)', cmd: 'journalctl -u nginx -n 200 --no-pager' },
+        ];
+        if (r === 'teamserver') return [
+            { label: 'Cobalt Strike install', path: '/var/log/cs-install.log' },
+            { label: 'TeamServer log', path: '/opt/logs/teamserver.log' },
+            { label: 'Bootstrap status', path: '/opt/cobaltstrike/bootstrap-status' },
+            { label: 'teamserver service', cmd: 'journalctl -u teamserver -n 200 --no-pager' },
+        ];
+        if (r === 'attackbox') return [
+            { label: 'Attack-box init', path: 'C:\\Users\\Administrator\\Desktop\\Deployment-Logs-Scripts\\attackbox-init.log', win: true },
+            { label: 'Setup status', path: 'C:\\ProgramData\\setup-status.json', win: true },
+        ];
+        if (r === 'jumpbox') return [
+            { label: 'Jumpbox init', path: '/var/log/jumpbox-init.log' },
+            { label: 'Bootstrap status', path: '/opt/jumpbox/bootstrap-status' },
+        ];
+        return [{ label: 'System log', path: '/var/log/syslog' }];
+    },
+
+    _ssmCmd(instanceId, region, t) {
+        const doc = t.win ? 'AWS-RunPowerShellScript' : 'AWS-RunShellScript';
+        const inner = t.cmd ? t.cmd
+            : (t.win ? `Get-Content -Tail 200 '${t.path}'` : `tail -n 200 ${t.path}`);
+        return `aws ssm send-command --instance-ids ${instanceId || '<id>'} --region ${region} `
+            + `--document-name ${doc} --parameters 'commands=["${inner.replace(/"/g, '\\"')}"]'`;
+    },
+
+    // Canned, realistic log excerpts for the demo so the drawer SHOWS evidence
+    // (real deployments fetch live via the copyable SSM command / Fetch button).
+    _demoLog(checkId) {
+        const M = {
+            decoy_site: '2026/06/09 12:00:03 [error] 142#142: *51 open() "/usr/share/nginx/html/index.html" failed (2: No such file)\n"GET / HTTP/1.1" 404 153 "-" "Mozilla/5.0" — DECOY NOT DEPLOYED (default nginx)',
+            cert_expiry: 'notAfter=Jun  7 11:59:00 2026 GMT\nopenssl verify: certificate has EXPIRED (2 days ago) — HTTPS beacons will fail TLS',
+            c2_mgmt_port: 'connect to 10.0.10.20:50050 — Connection refused\nteamserver.service: Main process exited, code=exited, status=1/FAILURE',
+            c2_listener_port: 'connect to 10.0.10.20:443 — Connection refused\nnginx: [emerg] bind() to 0.0.0.0:443 failed — listener down, beacons cannot check in',
+            http_reachable: '"GET / HTTP/1.1" — upstream timed out (110: Connection timed out) while connecting to C2',
+            proxy_path: '"GET /jquery-3.3.1.min.js HTTP/1.1" 200 612 "-" "Mozilla/5.0"\n→ served /usr/share/nginx/html (default site) — proxy_pass to 10.0.10.20:443 NOT matched. Beacon callbacks are being black-holed by the decoy.',
+            disk: '$ df -h /\nFilesystem  Size  Used Avail Use% Mounted on\n/dev/root    20G   19G  1.1G  95% /\n— /opt/cobaltstrike/logs growing unbounded; rotate or beacon logging stalls',
+            memory: '$ free -m\n              total   used   free\nMem:           3934   3777    157\n— teamserver RSS 2.9G; OOM killer risk, beacons may drop on allocation',
+            cpu_load: '$ uptime\n 12:04:11 up 9 days,  load average: 7.20, 6.84, 5.91\n— 2 vCPU saturated (load 7.2); task acknowledgements lagging',
+            cpu: 'PS> Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name=\'_Total\'"\nPercentProcessorTime : 99\n— CPU pegged; on-host tooling / beacon tasking saturating the box, UI + RDP will feel unresponsive',
+            dns_record: '$ dig +short demo-engagement.example.com\n198.51.100.9\n— A record points at 198.51.100.9, NOT redirector 203.0.113.50 (stale record / rotation drift / possible takeover)',
+        };
+        return M[checkId] || '';
+    },
+
+    _openInvestigate(project, hostKey) {
+        const payload = this._status[project] || {};
+        const host = (payload.hosts || []).find(h => (h.instance_id || h.name) === hostKey)
+            || (payload.hosts || []).find(h => h.name === hostKey);
+        if (!host) return;
+        const isDemo = this._isDemo({ _filename: project });
+        const region = this._regionFor(project);
+        const m = this._meta(host.status);
+
+        const evidence = (host.checks || []).map(c => {
+            const cm = this._meta(c.status);
+            const demoLog = isDemo && (c.status === 'crit' || c.status === 'warn') ? this._demoLog(c.id) : '';
+            return `
+              <div class="mc-ev">
+                <div class="mc-ev__head">
+                  <span class="mc-dot mc-dot--${cm.cls}"></span>
+                  <span class="mc-ev__id">${this._esc(c.id)}</span>
+                  <span class="mc-ev__detail">${this._esc(c.detail || '')}</span>
+                </div>
+                ${demoLog ? `<pre class="mc-ev__log">${this._esc(demoLog)}</pre>` : ''}
+              </div>`;
+        }).join('') || '<p class="mc-drawer__muted">No checks recorded.</p>';
+
+        const logs = this._logTargets(host.role).map(t => `
+              <div class="mc-logtarget">
+                <div class="mc-logtarget__label">${this._esc(t.label)}</div>
+                <code class="mc-logtarget__path">${this._esc(t.path || t.cmd)}</code>
+                <button class="mc-copy" data-mc-copy="${this._esc(this._ssmCmd(host.instance_id, region, t))}">Copy SSM command</button>
+              </div>`).join('');
+
+        // 24h trend — uptime %, status sparkline, response-time graph (from cached history).
+        const hist = this._hist(project, host);
+        const trendSection = (hist && (hist.series || []).length) ? `
+              <h4 class="mc-drawer__h">24h trend</h4>
+              <div class="mc-drawer__trend">
+                <div class="mc-drawer__trendrow">${this._uptimeBadge(hist)}${this._sparkline(hist.series, 80)}</div>
+                ${this._responseTrend(hist.series)}
+              </div>` : '';
+
+        const drawer = document.createElement('div');
+        drawer.className = 'mc-drawer-backdrop';
+        drawer.innerHTML = `
+          <aside class="mc-drawer mc--${m.cls}" role="dialog" aria-label="Investigate ${this._esc(host.name || '')}">
+            <header class="mc-drawer__head">
+              <div>
+                <span class="mc-dot mc-dot--${m.cls}"></span>
+                <strong>${this._esc(host.name || host.role || 'host')}</strong>
+                <span class="mc-drawer__sub">${this._esc(host.role || '')} · ${this._esc(host.public_ip || host.private_ip || '')}</span>
+              </div>
+              <button class="mc-drawer__close" data-mc-action="close-investigate" aria-label="Close">✕</button>
+            </header>
+            <div class="mc-drawer__body">
+              ${trendSection}
+              <h4 class="mc-drawer__h">Evidence — probe findings</h4>
+              ${evidence}
+              <h4 class="mc-drawer__h">Where to look — on-host logs</h4>
+              ${logs}
+              <p class="mc-drawer__muted">${isDemo
+                ? 'Demo shows canned excerpts. On a live host, run the copied command from the Dashboard Server (SSM) — or wire the Fetch button to /api/health/probes/logs.'
+                : 'Run a copied command from the Dashboard Server (SSM) to pull the live tail.'}</p>
+            </div>
+          </aside>`;
+        document.body.appendChild(drawer);
+        // Close on backdrop click, ✕, or copy-to-clipboard on the copy buttons.
+        drawer.addEventListener('click', (e) => {
+            if (e.target === drawer || e.target.closest('[data-mc-action="close-investigate"]')) {
+                this._closeInvestigate(); return;
+            }
+            const cp = e.target.closest('[data-mc-copy]');
+            if (cp) {
+                try { navigator.clipboard.writeText(cp.dataset.mcCopy); cp.textContent = 'Copied ✓'; } catch (_) {}
+            }
+        });
+        this._drawerEl = drawer;
+    },
+
+    _closeInvestigate() {
+        if (this._drawerEl) { this._drawerEl.remove(); this._drawerEl = null; }
+    },
+
+    // ── actions ────────────────────────────────────────────────────────
+
+    _bind(body) {
+        if (body._mcBound) return;
+        body._mcBound = true;
+        body.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-mc-action]');
+            if (!btn || btn.tagName === 'SELECT') return;
+            const action = btn.dataset.mcAction;
+            const proj = btn.dataset.mcProject;
+            if (action === 'run') this._runProbe(proj, btn);
+            else if (action === 'run-all') this._runAll(btn);
+            else if (action === 'topology') this._toggleTopology(proj, btn);
+            else if (action === 'toggle-scheduler') this._toggleScheduler(btn);
+            else if (action === 'demo-state') this._setDemoState(btn.dataset.mcState, btn);
+            else if (action === 'toggle-demo') this._toggleDemo();
+            else if (action === 'goto-deploy') APP.navigateTo('deployments-tab', 'deploy');
+            else if (action === 'investigate') this._openInvestigate(proj, btn.dataset.mcHost);
+            else if (action === 'view') { this._view = btn.dataset.mcView; this._stopPoll(); this.render(); }
+            else if (action === 'alert-filter') { this._alertFilter.severity = btn.dataset.mcFval; this._renderAlertsBody(); }
+            else if (action === 'alerts-tab') { this._alertsTab = btn.dataset.mcTab; this._renderAlertsBody(); }
+            else if (action === 'alert-clear') {
+                const d = btn.dataset;
+                this._clearAlerts([{ aproject: d.mcAproject, atarget: d.mcAtarget, astatus: d.mcAstatus,
+                                     aname: d.mcAname, arole: d.mcArole, areason: d.mcAreason }]);
+            } else if (action === 'alert-clear-all') {
+                const list = [...document.querySelectorAll('[data-mc-action="alert-clear"]')].map(b => ({
+                    aproject: b.dataset.mcAproject, atarget: b.dataset.mcAtarget, astatus: b.dataset.mcAstatus,
+                    aname: b.dataset.mcAname, arole: b.dataset.mcArole, areason: b.dataset.mcAreason }));
+                this._clearAlerts(list);
+            }
+        });
+        body.addEventListener('change', (e) => {
+            const sel = e.target.closest('[data-mc-action="overview-select"]');
+            if (sel) { this._overviewProject = sel.value; this._mountOverviewTopology(); return; }
+            const roleSel = e.target.closest('[data-mc-action="alert-role"]');
+            if (roleSel) { this._alertFilter.role = roleSel.value; this._renderAlertsBody(); }
+        });
+    },
+
+    _toggleDemo() {
+        this._showDemo = !this._showDemo;
+        // Reset overview selection so it re-defaults sensibly after the set changes.
+        this._overviewProject = null;
+        this._stopPoll();
+        this.render();
+    },
+
+    async _setDemoState(state, btn) {
+        if (!state) return;
+        // Optimistic active-state on the segmented control.
+        if (btn && btn.parentElement) {
+            btn.parentElement.querySelectorAll('.mc-demo-seg__btn')
+               .forEach(b => b.classList.toggle('is-active', b === btn));
+        }
+        try {
+            // /status?state= switches the sticky scenario AND records a sample
+            // server-side (so history / incident timeline / alerts reflect it),
+            // returning the payload instantly — no probe-run poll lag.
+            const r = await fetch(`/api/health/probes/status?project=demo&state=${encodeURIComponent(state)}`);
+            this._status['demo'] = await r.json();
+            this._patchDemoBanner();   // reflect the active scenario in the banner
+            // In the Alerts view there are no fleet/card/map surfaces — reload
+            // the alerts (+ archive + timeline) instead.
+            if (this._view === 'alerts') { await this._loadAlerts(); return; }
+            this._patchCard('demo');
+            this._patchFleetStrip();   // rollup re-paints (Healthy/Degraded/Critical)
+            this._patchFleetMap();     // VPC cluster colour re-paints
+            if (this._overviewProject === 'demo') this._mountOverviewTopology();
+            this._topoMounted['demo'] = false;   // force per-card canvas to re-pick health on next open
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast(`Demo switch failed: ${e.message}`, 'danger');
+        }
+    },
+
+    async _runProbe(project, btn) {
+        if (!project) return;
+        const orig = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Probing…'; }
+        this._probing[project] = true;
+        this._probeStart[project] = Date.now();
+        this._patchCard(project);        // show the "checking…" state immediately
+        this._startProbeTicker();        // tick the elapsed-seconds label
+        try {
+            const region = this._regionFor(project);
+            const r = await fetch('/api/health/probes/run', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project, region }),
+            });
+            const j = await r.json();
+            if (!j.success) throw new Error(j.error || 'probe failed to start');
+            const payload = await this._pollRun(j.run_id);
+            this._status[project] = payload;
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast(`Probe failed: ${e.message}`, 'danger');
+        } finally {
+            this._probing[project] = false;
+            delete this._probeStart[project];
+            if (btn) { btn.disabled = false; btn.textContent = orig || 'Run probes'; }
+            this._patchCard(project);
+            this._patchFleetStrip();
+            this._patchFleetMap();
+            this._stopProbeTickerIfIdle();
+        }
+    },
+
+    // A single shared 1s interval re-patches whatever cards are still probing so
+    // their "checking… (Ns)" counter advances; it stops itself once nothing is
+    // in flight (no idle timer left running).
+    _startProbeTicker() {
+        if (this._probeTicker) return;
+        this._probeTicker = setInterval(() => {
+            const active = Object.keys(this._probing).filter(p => this._probing[p]);
+            if (!active.length) { this._stopProbeTickerIfIdle(); return; }
+            active.forEach(p => this._patchCard(p));
+        }, 1000);
+    },
+    _stopProbeTickerIfIdle() {
+        const anyProbing = Object.keys(this._probing).some(p => this._probing[p]);
+        if (!anyProbing && this._probeTicker) {
+            clearInterval(this._probeTicker);
+            this._probeTicker = null;
+        }
+    },
+
+    async _runAll(btn) {
+        const orig = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Probing…'; }
+        try {
+            await Promise.all(this._deployments.map(d => this._runProbe(d._filename, null)));
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = orig || 'Run probes'; }
+        }
+    },
+
+    async _pollRun(runId) {
+        // Poll for the background probe run. The backend caps a run at ~45s
+        // (_OVERALL_PROBE_DEADLINE) and returns target-shaped "unknown" records
+        // for any straggler, so this client just needs a slightly larger ceiling
+        // (~60s) as a backstop. 1.5s cadence keeps the elapsed counter snappy now
+        // that probes run concurrently and usually finish in ~1-5s.
+        for (let i = 0; i < 40; i++) {
+            await new Promise(res => setTimeout(res, 1500));
+            const r = await fetch(`/api/health/probes/poll?run_id=${encodeURIComponent(runId)}`);
+            const j = await r.json();
+            if (j.status === 'complete') {
+                if (j.success === false) throw new Error(j.error || 'probe error');
+                return j;
+            }
+        }
+        throw new Error('probe timed out');
+    },
+
+    _toggleTopology(project, btn) {
+        const card = document.querySelector(`.mc-deployment-card[data-mc-project="${CSS.escape(project)}"]`);
+        if (!card) return;
+        const host = card.querySelector(`[data-mc-topo]`);
+        if (!host) return;
+        const showing = !host.hidden;
+        if (showing) {
+            host.hidden = true;
+            if (btn) btn.setAttribute('aria-expanded', 'false');
+            return;
+        }
+        host.hidden = false;
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+        if (!this._topoMounted[project] && typeof TOPOLOGY !== 'undefined'
+            && typeof TOPOLOGY.mountInline === 'function') {
+            try {
+                // Named VPC boundary header so the drill-down clearly states
+                // which deployment's VPC (+ CIDR) you're looking at.
+                const cidr = (this._status[project] || {}).vpc_cidr || '';
+                const label = document.createElement('div');
+                label.className = 'mc-topo-vpclabel';
+                label.innerHTML = `<span class="mc-vpc__name">${this._esc(project)}</span>`
+                    + `<span class="mc-vpc__cidr">${this._esc(cidr ? 'VPC ' + cidr : 'VPC')}</span>`;
+                const mount = document.createElement('div');
+                host.appendChild(label);
+                host.appendChild(mount);
+                TOPOLOGY._mcHealth = this._topoHealthMap(project);
+                TOPOLOGY.mountInline(mount, project);
+                this._topoMounted[project] = true;
+            } catch (e) {
+                host.innerHTML = `<div class="status-display error">Topology unavailable: ${this._esc(e.message)}</div>`;
+            }
+        }
+    },
+
+    async _toggleScheduler(btn) {
+        // Flip auto-checks on/off. `_schedulerRunning` is kept current by
+        // _refreshScheduler (which polls /scheduler), so the button always
+        // reflects real backend state, not just the last click.
+        const turningOn = !this._schedulerRunning;
+        const url = turningOn ? '/api/health/probes/scheduler/start'
+                              : '/api/health/probes/scheduler/stop';
+        if (btn) btn.disabled = true;
+        try {
+            const r = await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(turningOn ? { region: this._region, interval: 3600 } : {}),
+            });
+            const j = await r.json();
+            if (j.success && typeof APP.toast === 'function') {
+                APP.toast(turningOn
+                    ? 'Auto-checks enabled (hourly, dead-man\'s-switch on).'
+                    : 'Auto-checks disabled — probes only run on demand now.',
+                    turningOn ? 'success' : 'info');
+            }
+        } catch (e) {
+            if (typeof APP.toast === 'function')
+                APP.toast(`Could not ${turningOn ? 'enable' : 'disable'}: ${e.message}`, 'danger');
+        } finally {
+            if (btn) btn.disabled = false;
+            this._refreshScheduler();
+        }
+    },
+
+    // ── live refresh (self-cleaning) ────────────────────────────────────
+
+    _startPoll() {
+        this._stopPoll();
+        this._pollInterval = setInterval(() => this._tick(), this._pollMs);
+    },
+
+    _stopPoll() {
+        if (this._pollInterval) { clearInterval(this._pollInterval); this._pollInterval = null; }
+    },
+
+    _isVisible() {
+        const page = document.querySelector('.tab-page[data-page="mission-control"]');
+        return !!(page && page.classList.contains('active') && page.style.display !== 'none');
+    },
+
+    async _tick() {
+        if (!this._isVisible()) { this._stopPoll(); return; }   // self-clean on leave
+        await Promise.all(this._deployments.map(async (d) => {
+            try {
+                const r = await fetch(`/api/health/probes/status?project=${encodeURIComponent(d._filename)}`);
+                this._status[d._filename] = await r.json();
+            } catch (_) { /* keep last known */ }
+        }));
+        this._deployments.forEach(d => this._patchCard(d._filename));
+        this._patchFleetStrip();
+        this._patchFleetMap();
+        this._refreshScheduler();
+    },
+
+    _patchCard(project) {
+        const card = document.querySelector(`.mc-deployment-card[data-mc-project="${CSS.escape(project)}"]`);
+        if (!card) return;
+        const dep = this._deployments.find(d => d._filename === project);
+        if (!dep) return;
+        const topoEl = card.querySelector('[data-mc-topo]');
+        const wasOpen = topoEl ? !topoEl.hidden : false;
+        const fresh = document.createElement('div');
+        fresh.innerHTML = this._card(dep);
+        const newCard = fresh.firstElementChild;
+        // Preserve an already-mounted topology canvas across the patch.
+        if (wasOpen && this._topoMounted[project]) {
+            const oldTopo = card.querySelector('[data-mc-topo]');
+            const newTopo = newCard.querySelector('[data-mc-topo]');
+            newTopo.hidden = false;
+            newTopo.replaceWith(oldTopo);
+            const tBtn = newCard.querySelector('[data-mc-action="topology"]');
+            if (tBtn) tBtn.setAttribute('aria-expanded', 'true');
+        }
+        card.replaceWith(newCard);
+    },
+
+    _patchFleetStrip() {
+        const strip = document.querySelector('.mc-fleet-strip');
+        if (!strip) return;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = this._fleetStrip();
+        strip.replaceWith(tmp.firstElementChild);
+    },
+
+    async _refreshScheduler() {
+        const el = document.getElementById('mc-heartbeat');
+        if (!el) return;
+        try {
+            const r = await fetch('/api/health/probes/scheduler');
+            const j = await r.json();
+            this._schedulerRunning = !!j.running;
+            if (!j.running) {
+                el.textContent = 'auto-checks: off';
+                el.className = 'mc-heartbeat mc-heartbeat--off';
+            } else if (j.stale) {
+                el.textContent = 'scheduler: STALE';
+                el.className = 'mc-heartbeat mc-heartbeat--stale';
+            } else {
+                const age = j.heartbeat && j.heartbeat.age_seconds != null
+                    ? `${Math.round(j.heartbeat.age_seconds / 60)}m ago` : 'live';
+                el.textContent = `scheduler: ${age}`;
+                el.className = 'mc-heartbeat mc-heartbeat--live';
+            }
+        } catch (_) {
+            this._schedulerRunning = false;
+            el.textContent = 'scheduler: ?';
+            el.className = 'mc-heartbeat mc-heartbeat--off';
+        }
+        this._syncSchedulerButton();
+    },
+
+    // Keep the toggle's label/state in lock-step with the real scheduler status.
+    _syncSchedulerButton() {
+        const btn = document.getElementById('mc-scheduler-btn');
+        if (!btn) return;
+        const on = !!this._schedulerRunning;
+        btn.textContent = on ? 'Disable auto-checks' : 'Enable auto-checks';
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.classList.toggle('is-active', on);
+    },
+
+    // ── small helpers ───────────────────────────────────────────────────
+
+    _worst(statuses) {
+        // na is excluded from the rollup (rank 0, like ok) so off-vantage
+        // checks never make a healthy fleet read as degraded.
+        const rank = { ok: 0, na: 0, unknown: 1, warn: 2, crit: 3 };
+        let worst = 'ok';
+        statuses.forEach(s => { if ((rank[s] ?? 1) > (rank[worst] ?? 0)) worst = s; });
+        return statuses.length ? worst : 'unknown';
+    },
+
+    _regionFor(project) {
+        const dep = this._deployments.find(d => d._filename === project);
+        return (dep && dep.region) || this._region;
+    },
+
+    _ago(iso) {
+        try {
+            const then = new Date(iso).getTime();
+            const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+            if (secs < 60) return `checked ${secs}s ago`;
+            if (secs < 3600) return `checked ${Math.round(secs / 60)}m ago`;
+            return `checked ${Math.round(secs / 3600)}h ago`;
+        } catch (_) { return 'checked recently'; }
+    },
+
+    // Compact duration since a unix timestamp — "14m", "2h", "3d".
+    _durSince(unixTs) {
+        const secs = Math.max(0, Math.round(Date.now() / 1000 - (unixTs || 0)));
+        if (secs < 60) return `${secs}s`;
+        if (secs < 3600) return `${Math.round(secs / 60)}m`;
+        if (secs < 86400) return `${Math.round(secs / 3600)}h`;
+        return `${Math.round(secs / 86400)}d`;
+    },
+};
+
+/**
  * D3.5 — Cleanup hook for an outgoing sub-pill. Mirrors the per-tab
  * tab-leave cleanup that used to live in navigateTo() before the 3
  * legacy flat tabs were merged into 'deployments-tab'. Without this,
@@ -4834,8 +6068,8 @@ APP.journey = (function () {
 APP.demo = {
     active: false,            // guided walkthrough in progress
     step: null,               // 'start'|<STEPS>|'done'
-    // The 5 numbered steps. 'start' and 'done' are the terminal anchors.
-    STEPS: ['configure', 'deploy', 'manage', 'bolt-ons', 'operations'],
+    // The 6 numbered steps. 'start' and 'done' are the terminal anchors.
+    STEPS: ['configure', 'deploy', 'manage', 'bolt-ons', 'operations', 'mission-control'],
     // One-shot guard so _seedComposer() doesn't clobber operator edits on
     // every configure-step re-render. Reset on restart()/exit().
     _composerSeeded: false,
@@ -5205,6 +6439,12 @@ APP.demo = {
             // sub-pill (Beacons) renders the synthetic beacon tree. The global
             // stepper stays mounted/visible above the operations content.
             if (typeof APP.navigateTo === 'function') APP.navigateTo('operations-tab', 'beacons');
+            if (action) action.appendChild(mkBtn('Next: Mission Control →', 'primary', () => APP.demo.next()));
+        } else if (this.step === 'mission-control') {
+            // Step 6 — the glanceable fleet overview. Mission Control auto-enters
+            // demo-only mode while APP.demo.active, so it shows just the synthetic
+            // deployment with the Healthy/Degraded/Critical scenario switcher.
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('mission-control');
             if (action) action.appendChild(mkBtn('Finish demo →', 'primary', () => APP.demo.finish()));
         } else if (this.step === 'done') {
             if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'manage');
@@ -29638,6 +30878,17 @@ const TOPOLOGY = {
         }
     },
 
+    // Resolve a node's Mission Control health status from the overlay, trying
+    // instance_id then both IPs (so it matches however the node is identified).
+    _mcNodeStatus(n) {
+        if (!this._mcHealth || !n.data) return null;
+        const d = n.data;
+        return this._mcHealth[d.instance_id]
+            || this._mcHealth[d.public_ip]
+            || this._mcHealth[d.private_ip]
+            || null;
+    },
+
     _drawNode(n) {
         const ctx = this.ctx;
         const cfg = this.NODE_TYPES[n.type] || { w: 140, h: 48, color: '#7A849E' };
@@ -29665,12 +30916,23 @@ const TOPOLOGY = {
 
         // Border
         let borderColor = cfg.color;
+        let mcAlert = false;
         if (n.type === 'beacon') {
             borderColor = n.health === 'alive' ? '#7ECF8C' : n.health === 'stale' ? '#F0CA4A' : '#F08A84';
             if (n.health === 'dead') ctx.globalAlpha = 0.5;
+        } else if (this._mcHealth) {
+            // Mission Control health overlay active: colour encodes ONLY health,
+            // never node type (so it can't be confused with the type palette).
+            // Health colour when we have a probe status; neutral grey otherwise
+            // (e.g. attack box — present but not health-monitored).
+            const st = this._mcNodeStatus(n);
+            if (st === 'crit') { borderColor = '#F08A84'; mcAlert = true; }
+            else if (st === 'warn') { borderColor = '#F0CA4A'; mcAlert = true; }
+            else if (st === 'ok') { borderColor = '#7ECF8C'; }
+            else { borderColor = '#3A4258'; }   // unmonitored — neutral
         }
         ctx.strokeStyle = borderColor;
-        ctx.lineWidth = selected ? 3 : 1.5;
+        ctx.lineWidth = selected ? 3 : (mcAlert ? 3 : 1.5);
         ctx.stroke();
 
         // Double border for SYSTEM / admin beacons (elevated privilege indicator)
@@ -29739,6 +31001,23 @@ const TOPOLOGY = {
             ctx.arc(x + w - 10, y + 12, 4, 0, Math.PI * 2);
             ctx.fillStyle = stateColor;
             ctx.fill();
+        }
+
+        // Mission Control HEALTH dot (probe status) — the clear good/bad/broken
+        // signal: green=healthy, amber=degraded, red=critical. Bigger + outlined
+        // so it reads as the primary status, distinct from the EC2 state dot.
+        if (this._mcHealth && n.type !== 'beacon') {
+            const st = this._mcNodeStatus(n);
+            if (st === 'ok' || st === 'warn' || st === 'crit') {
+                const c = st === 'crit' ? '#F08A84' : st === 'warn' ? '#F0CA4A' : '#7ECF8C';
+                ctx.beginPath();
+                ctx.arc(x + 12, y + h - 12, 5.5, 0, Math.PI * 2);
+                ctx.fillStyle = c;
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = selected ? '#2A3050' : '#1C2031';
+                ctx.stroke();
+            }
         }
 
         // Floating label
@@ -31397,6 +32676,8 @@ async function loadOperators() {
         if (!data || !data.success) return;
         APP.operator.current = data.current || null;
         APP.operator.all = data.operators || [];
+        // Prod binds identity to the SSH key → not switchable (display-only chip).
+        APP.operator.switchable = data.switchable !== false;
         renderOperatorChip();
         renderOperatorMenu();
         APP.operator._notify();
@@ -31423,6 +32704,32 @@ function renderOperatorMenu() {
     const list = document.getElementById('operator-menu-list');
     if (!list) return;
     const currentId = APP.operator.current ? APP.operator.current.id : null;
+    const switchable = APP.operator.switchable !== false;
+
+    // SSH-key-bound identity (prod): no switching, no add/manage — relabel the
+    // section and hide the action chrome. In dev (single local user) keep them.
+    const label = document.getElementById('operator-menu-label');
+    if (label) label.textContent = switchable ? 'Switch operator' : 'Signed in as';
+    const divider = document.getElementById('operator-menu-divider');
+    const actions = document.getElementById('operator-menu-actions');
+    if (divider) divider.style.display = switchable ? '' : 'none';
+    if (actions) actions.style.display = switchable ? '' : 'none';
+
+    // Display-only mode (production): identity is bound to the operator's SSH
+    // key, so switching is disabled. Show only who you are, with an explainer —
+    // no clickable switch rows.
+    if (!switchable) {
+        const cur = APP.operator.current || {};
+        list.innerHTML = `
+            <div class="operator-menu__identity">
+                <span class="operator-menu__operator-dot operator-dot operator-dot--lg" style="background: ${escapeHtml(cur.color || '#7A849E')}"></span>
+                <span class="operator-menu__operator-name">${escapeHtml(cur.display || cur.id || 'Unknown')}</span>
+                <span class="operator-menu__operator-id">${escapeHtml(cur.id || '')}</span>
+            </div>
+            <p class="operator-menu__note">Identity is bound to your SSH key and can't be switched.</p>`;
+        return;
+    }
+
     list.innerHTML = APP.operator.all.map(op => {
         const isActive = op.id === currentId ? ' is-active' : '';
         return `

@@ -5538,14 +5538,15 @@ body { padding-top: 64px; }
        (outside .tab-page, which carries the 30px page padding). Re-apply the
        same horizontal inset + a top gap so the bar lines up with page content
        on BOTH the Deployments and Operations tabs. */
-    margin: 30px 30px 0 30px;
+    margin: 48px 30px 0 30px;
     background: var(--bg-section);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     /* Sticky below the fixed top utility bar (matches .subpill-nav offset) so
-       the stepper stays pinned as either tab's content column scrolls. */
+       the stepper stays pinned as either tab's content column scrolls. The +14px
+       keeps a clear gap from the top utility bar both at rest and when pinned. */
     position: sticky;
-    top: var(--app-topbar-h);
+    top: calc(var(--app-topbar-h) + 14px);
     z-index: 6;
 }
 /* Labelled head — gives the bar identity in the page's eyebrow language
@@ -16241,3 +16242,719 @@ textarea.cfg-input {
     background: var(--info-bg);
     border-radius: 8px;
 }
+
+/* ============================================================================
+   MISSION CONTROL — single-pane runtime overview
+   Glanceable fleet health. All colours come from palette.css variables so both
+   dark and light themes resolve correctly (no raw hex). Status dots breathe on
+   problem states only, so the eye is pulled to "you need to dig here" (INOC SPOG
+   principle). Numbers use the mono stack. Respects prefers-reduced-motion.
+   ============================================================================ */
+
+.mc-pane { padding: 4px 0 32px; }
+
+/* Header ------------------------------------------------------------------- */
+.mc-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.mc-title {
+    margin: 0;
+    font-size: 1.6em;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+}
+.mc-subtitle {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 0.92em;
+    max-width: 60ch;
+    line-height: 1.5;
+}
+.mc-header__meta { display: flex; align-items: center; gap: 10px; }
+
+.mc-heartbeat {
+    font-family: var(--font-family-mono);
+    font-size: 0.78em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.mc-heartbeat--live  { color: var(--success-text); border-color: var(--success-border); background: var(--success-bg); }
+.mc-heartbeat--stale { color: var(--danger-text);  border-color: var(--danger-border);  background: var(--danger-bg); }
+.mc-heartbeat--off   { color: var(--text-muted); }
+
+/* Status dots -------------------------------------------------------------- */
+.mc-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex: 0 0 auto;
+}
+.mc-dot--lg { width: 15px; height: 15px; }
+.mc-dot--ok      { background: var(--success); color: var(--success); }
+.mc-dot--warn    { background: var(--warning); color: var(--warning); }
+.mc-dot--crit    { background: var(--danger);  color: var(--danger); }
+.mc-dot--unknown { background: var(--text-muted); color: var(--text-muted); }
+
+@media (prefers-reduced-motion: no-preference) {
+    .mc-dot--crit { animation: mc-pulse 1.8s ease-in-out infinite; }
+    .mc-dot--warn { animation: mc-pulse 2.6s ease-in-out infinite; }
+}
+@keyframes mc-pulse {
+    0%   { box-shadow: 0 0 0 0 currentColor; }
+    70%  { box-shadow: 0 0 0 5px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Fleet status strip ------------------------------------------------------- */
+.mc-fleet-strip {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background: var(--bg-section);
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+/* Status reads off the dot; healthy stays calm. Only tint the whole border
+   when there's a problem to pull the eye — no decorative left rail. */
+.mc-fleet-strip.mc--warn { border-color: var(--warning-border); }
+.mc-fleet-strip.mc--crit { border-color: var(--danger-border); }
+.mc-fleet-strip__text { display: flex; flex-direction: column; line-height: 1.35; }
+.mc-fleet-strip__text strong { color: var(--text-primary); font-size: 1.05em; }
+.mc-fleet-strip__counts { color: var(--text-secondary); font-size: 0.9em; }
+.mc-legend { display: flex; gap: 16px; margin-left: auto; flex-wrap: wrap; }
+.mc-legend__item {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--text-muted); font-size: 0.8em;
+}
+/* legend dots never breathe */
+.mc-legend__item .mc-dot { animation: none; }
+.mc-mono { font-family: var(--font-family-mono); color: var(--text-primary); }
+
+/* Deployment cards --------------------------------------------------------- */
+.mc-deployments {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 16px;
+}
+.mc-deployment-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: transform var(--transition), box-shadow var(--transition);
+}
+/* Status on the dot; tint the whole border only on problems. */
+.mc-deployment-card.mc--warn { border-color: var(--warning-border); }
+.mc-deployment-card.mc--crit { border-color: var(--danger-border); }
+.mc-deployment-card:hover { box-shadow: 0 6px 20px -10px rgba(0,0,0,0.25); }
+
+.mc-card__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+}
+.mc-card__id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mc-card__name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.98em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mc-card__type { flex: 0 0 auto; }
+.mc-card__checked {
+    color: var(--text-muted);
+    font-size: 0.78em;
+    margin-left: auto;
+    white-space: nowrap;
+}
+.mc-card__actions { display: flex; gap: 8px; }
+
+/* Host + fabric rows ------------------------------------------------------- */
+.mc-hosts { display: flex; flex-direction: column; }
+.mc-host-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+}
+.mc-host-row:last-child { border-bottom: none; }
+.mc-host-row--fabric { background: var(--bg-section); }
+.mc-host-row--empty {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.86em;
+    justify-content: flex-start;
+}
+.mc-host-row__role {
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: capitalize;
+    min-width: 84px;
+    font-size: 0.86em;
+}
+.mc-host-row__name { color: var(--text-primary); font-size: 0.86em; }
+.mc-host-row__name--muted { color: var(--text-muted); text-transform: uppercase; font-size: 0.74em; letter-spacing: 0.04em; }
+.mc-host-row__ip { color: var(--text-secondary); font-size: 0.8em; }
+.mc-checks { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+
+/* Check chips -------------------------------------------------------------- */
+.mc-chip {
+    font-family: var(--font-family-mono);
+    font-size: 0.72em;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: var(--bg-elevated);
+    cursor: default;
+}
+.mc-chip--ok   { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.mc-chip--warn { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+.mc-chip--crit { background: var(--danger-bg);  color: var(--danger-text);  border-color: var(--danger-border); }
+.mc-chip--unknown { background: var(--bg-elevated); color: var(--text-muted); }
+
+/* Drill-down topology mount ------------------------------------------------ */
+.mc-topology {
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-section);
+}
+
+/* Empty + skeleton states -------------------------------------------------- */
+.mc-empty {
+    text-align: center;
+    padding: 56px 24px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+}
+.mc-empty__mark {
+    width: 44px; height: 44px;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+}
+.mc-empty h3 { margin: 0 0 6px; color: var(--text-primary); }
+.mc-empty p { margin: 0 auto 16px; color: var(--text-secondary); max-width: 46ch; font-size: 0.9em; }
+
+.mc-skeleton { display: flex; flex-direction: column; gap: 16px; }
+.mc-skel-strip { height: 64px; border-radius: var(--radius-lg); background: var(--bg-section); }
+.mc-skel-card  { height: 160px; border-radius: var(--radius-lg); background: var(--bg-card); border: 1px solid var(--border); }
+@media (prefers-reduced-motion: no-preference) {
+    .mc-skel-strip, .mc-skel-card { animation: mc-skel 1.4s ease-in-out infinite; }
+}
+@keyframes mc-skel { 0%,100% { opacity: 0.55; } 50% { opacity: 0.85; } }
+
+/* Mobile collapse ---------------------------------------------------------- */
+@media (max-width: 768px) {
+    .mc-deployments { grid-template-columns: 1fr; }
+    .mc-header { flex-direction: column; align-items: flex-start; }
+    .mc-legend { margin-left: 0; }
+    .mc-checks { margin-left: 0; width: 100%; }
+}
+
+/* Mission Control — Live Topology overview + demo state switcher --------- */
+.mc-topo-overview {
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    overflow: hidden;
+}
+.mc-topo-overview__head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+}
+.mc-section-title { margin: 0; font-size: 1.02em; font-weight: 600; color: var(--text-primary); }
+.mc-section-sub { color: var(--text-muted); font-size: 0.82em; }
+.mc-topo-select {
+    margin-left: auto;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    font-size: 0.85em;
+}
+/* Interactive (draggable) canvas — sits below the fleet map, kept TALL.
+   Overrides the shared inline-topology fixed height for real vertical room. */
+.mc-topo-interactive {
+    margin-top: 16px;
+    border-top: 1px solid var(--border-subtle);
+}
+.mc-topo-overview__mount { min-height: 560px; padding: 0; }
+/* mountInline applies the dark `.beacon-topology--inline` (bg + 1px border +
+   radius) to THIS host element itself (the pane variant nests a .topology-pane
+   child instead). The dark canvas is the LAST element in the section card,
+   which clips to its own rounded corners via overflow:hidden — so neutralise
+   the canvas's own border/radius and let it fill flush, no light card bg
+   showing in the corners. The Interactive-map head's border-bottom is the only
+   divider; height comes from min-height above. */
+.mc-topo-overview__mount.beacon-topology--inline,
+.mc-topo-overview__mount .topology-pane,
+.mc-topo-overview__mount .beacon-topology--inline,
+.mc-topo-overview__mount .topology-pane__body {
+    border: 0;
+    border-radius: 0;
+    height: 560px;
+    max-height: none;
+    width: 100%;
+}
+/* Fleet VPC map — hub-and-spoke of every deployment's VPC at once -------- */
+.mc-fleet-map { padding: 18px 16px 22px; }
+.mc-vpc--hub {
+    max-width: 460px;
+    margin: 0 auto;
+    text-align: center;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
+    border-radius: var(--radius-lg);
+    padding: 12px 16px;
+}
+.mc-vpc--hub .mc-vpc__head { justify-content: center; }
+.mc-vpc__hubnote { color: var(--text-secondary); font-size: 0.8em; margin-top: 4px; }
+.mc-fleet-map__bus { width: 2px; height: 16px; background: var(--border); margin: 0 auto; }
+/* Spokes are centred as a single unit directly under the hub bus, and the
+   group is only as wide as its cards (fit-content) so the connector rail and
+   drop-lines always line up — a lone deployment sits centred under the hub
+   rather than being left-packed into an empty auto-fill grid (the old bug). */
+.mc-fleet-map__spokes {
+    position: relative;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
+    padding-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 22px 14px;
+}
+/* Horizontal rail spanning the fleet, sitting on the hub bus's centre line. */
+.mc-fleet-map__spokes::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--border);
+}
+/* Each deployment group drops a short connector up to the rail. The group wraps
+   the core VPC box plus any attached extension sub-boxes hanging beneath it. */
+.mc-fleet-map__spokes > .mc-vpc-group { position: relative; flex: 0 1 320px; max-width: 380px; }
+.mc-fleet-map__spokes > .mc-vpc-group::before {
+    content: ""; position: absolute; top: -16px; left: 50%;
+    width: 2px; height: 16px; background: var(--border); transform: translateX(-50%);
+}
+
+/* Attached-extension sub-boxes (test_lab in-VPC, GOAD/CCRTS peered) hanging off
+   the core C2 box via their own bus + rail + per-box drop connector. */
+.mc-vpc-ext__bus { width: 2px; height: 14px; background: var(--border); margin: 0 auto; }
+.mc-vpc-ext__boxes {
+    position: relative;
+    width: fit-content; max-width: 100%; margin: 0 auto;
+    padding-top: 12px;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 18px 10px;
+}
+.mc-vpc-ext__boxes::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--border);
+}
+.mc-vpc-ext {
+    position: relative; flex: 0 1 148px; min-width: 132px;
+    background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, 8px); padding: 8px 10px;
+}
+.mc-vpc-ext.mc--warn { border-color: var(--warning-border); }
+.mc-vpc-ext.mc--crit { border-color: var(--danger-border); }
+.mc-vpc-ext::before {
+    content: ""; position: absolute; top: -12px; left: 50%;
+    width: 2px; height: 12px; background: var(--border); transform: translateX(-50%);
+}
+.mc-vpc-ext__head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.mc-vpc-ext__name { font-weight: 600; color: var(--text-primary); font-size: 0.85em; }
+.mc-vpc-ext__inv { min-width: auto; }
+.mc-vpc-ext__cidr { display: block; margin-top: 6px; }
+.mc-vpc {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 12px 14px;
+}
+.mc-vpc.mc--warn { border-color: var(--warning-border); }
+.mc-vpc.mc--crit { border-color: var(--danger-border); }
+.mc-vpc--demo { border-style: dashed; }
+.mc-vpc__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mc-vpc__name {
+    font-weight: 600; color: var(--text-primary); font-size: 0.92em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;
+}
+.mc-vpc__cidr { font-family: var(--font-family-mono); font-size: 0.74em; color: var(--text-muted); }
+.mc-vpc__peer {
+    margin-left: auto; font-size: 0.68em; letter-spacing: 0.04em;
+    color: var(--info-text); background: var(--info-bg);
+    border: 1px solid var(--info-border); border-radius: 999px; padding: 1px 8px;
+}
+.mc-vpc__tier { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.mc-vpc__tier-label {
+    font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); min-width: 48px;
+}
+.mc-vpc__hosts { display: flex; gap: 6px; flex-wrap: wrap; }
+.mc-vpc__host {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.78em; color: var(--text-secondary); text-transform: capitalize;
+    background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+    border-radius: 6px; padding: 2px 8px;
+}
+.mc-vpc__empty { color: var(--text-muted); font-size: 0.82em; font-style: italic; margin-top: 8px; }
+
+/* Per-card drill-down: named VPC boundary header above the rich canvas */
+.mc-topo-vpclabel {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 0 4px 10px;
+}
+
+/* DEMO badge --------------------------------------------------------------- */
+.mc-card__demo {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    letter-spacing: 0.08em;
+    font-size: 0.66em;
+}
+
+/* Demo scenario switcher --------------------------------------------------- */
+/* Demo is distinguished by the DEMO badge only — no decorative border. */
+.mc-demo-switch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-section);
+    flex-wrap: wrap;
+}
+.mc-demo-switch__label {
+    color: var(--text-muted);
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+}
+.mc-demo-btn {
+    text-transform: capitalize;
+    font-size: 0.8em;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+.mc-demo-btn:hover { border-color: var(--info); color: var(--info-text); }
+.mc-demo-btn:active { transform: scale(0.97); }
+.mc-demo-btn.is-active {
+    background: var(--info-bg);
+    color: var(--info-text);
+    border-color: var(--info-border);
+    font-weight: 600;
+}
+
+/* Mission Control — N/A (off-vantage / not-probed) + checking state -------- */
+/* N/A reads as a hollow, muted marker — clearly "not checked from here",
+   distinct from a filled status dot. Never alarming. */
+.mc-dot--na {
+    background: transparent;
+    border: 1.5px dashed var(--text-muted);
+    width: 9px; height: 9px;
+    animation: none;
+}
+.mc-chip--na {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px dashed var(--border);
+    font-style: italic;
+}
+/* host/fabric rows that are N/A sit back visually */
+.mc-host-row .mc-dot--na ~ .mc-host-row__role { color: var(--text-muted); }
+
+/* "checking…" — gentle pulse while a probe run is in flight */
+.mc-card__checked--probing { color: var(--info-text); }
+@media (prefers-reduced-motion: no-preference) {
+    .mc-card__checked--probing { animation: mc-blink 1.2s ease-in-out infinite; }
+}
+@keyframes mc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Mission Control — DEMO scenario banner (only shown in demo mode) ----------
+   A single tidy strip: DEMO chip + one-line caption on the left, a compact
+   state-aware segmented control + Exit on the right. */
+.mc-demo-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    margin-bottom: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+}
+.mc-demo-banner__text { color: var(--text-secondary); font-size: 0.86em; }
+.mc-demo-banner__exit { margin-left: 6px; }
+
+/* Segmented control — three connected segments; the active one takes its
+   state's semantic tint (green/amber/red) so the control reads as the state. */
+.mc-demo-seg {
+    margin-left: auto;
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.mc-demo-seg__btn {
+    appearance: none;
+    border: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    padding: 5px 14px;
+    font-size: 0.82em;
+    text-transform: capitalize;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+.mc-demo-seg__btn:last-child { border-right: 0; }
+.mc-demo-seg__btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.mc-demo-seg__btn:active { transform: translateY(0.5px); }
+.mc-demo-seg__btn[data-mc-state="healthy"].is-active {
+    background: var(--success-bg); color: var(--success-text);
+    box-shadow: inset 0 -2px 0 var(--success); font-weight: 600;
+}
+.mc-demo-seg__btn[data-mc-state="degraded"].is-active {
+    background: var(--warning-bg); color: var(--warning-text);
+    box-shadow: inset 0 -2px 0 var(--warning); font-weight: 600;
+}
+.mc-demo-seg__btn[data-mc-state="critical"].is-active {
+    background: var(--danger-bg); color: var(--danger-text);
+    box-shadow: inset 0 -2px 0 var(--danger); font-weight: 600;
+}
+
+/* Operator chip — display-only identity (production, SSH-key-bound) ---------- */
+.operator-menu__identity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+}
+.operator-menu__note {
+    margin: 0;
+    padding: 0 12px 10px;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+/* Mission Control — Investigate affordance + evidence/logs drawer ----------- */
+.mc-investigate {
+    margin-left: 8px;
+    flex: 0 0 auto;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--info-border);
+    background: var(--info-bg);
+    color: var(--info-text);
+    font-size: 0.85em;
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--transition), border-color var(--transition), transform var(--transition);
+}
+.mc-investigate__icon { width: 13px; height: 13px; flex: 0 0 auto; }
+.mc-investigate:hover { background: var(--info-border); color: var(--bg-section); border-color: var(--info-border); }
+.mc-investigate:active { transform: scale(0.97); }
+.mc-investigate:focus-visible { outline: 2px solid var(--info-border); outline-offset: 2px; }
+
+.mc-drawer-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 60;
+    display: flex; justify-content: flex-end;
+}
+.mc-drawer {
+    width: min(560px, 100%);
+    height: 100%;
+    overflow-y: auto;
+    background: var(--bg-section);
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 32px -16px rgba(0, 0, 0, 0.4);
+    animation: mc-drawer-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes mc-drawer-in { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .mc-drawer { animation: none; } }
+.mc-drawer__head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 18px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg-section);
+}
+.mc-drawer__head strong { color: var(--text-primary); margin-left: 8px; }
+.mc-drawer__sub { color: var(--text-muted); font-size: 0.8em; margin-left: 8px; }
+.mc-drawer__close {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--text-muted); font-size: 1.1em; padding: 4px 8px; border-radius: 6px;
+}
+.mc-drawer__close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.mc-drawer__body { padding: 16px 18px; }
+.mc-drawer__h {
+    margin: 18px 0 10px; font-size: 0.72em; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted);
+}
+.mc-drawer__h:first-child { margin-top: 0; }
+.mc-drawer__muted { color: var(--text-muted); font-size: 0.8em; line-height: 1.5; }
+
+.mc-ev { margin-bottom: 10px; }
+.mc-ev__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mc-ev__id { font-family: var(--font-family-mono); font-size: 0.82em; color: var(--text-primary); }
+.mc-ev__detail { color: var(--text-secondary); font-size: 0.84em; }
+.mc-ev__log {
+    margin: 6px 0 0; padding: 10px 12px;
+    background: var(--bg-terminal); color: var(--text-terminal);
+    border-radius: var(--radius); font-family: var(--font-family-mono);
+    font-size: 0.78em; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}
+
+.mc-logtarget {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.mc-logtarget__label { color: var(--text-secondary); font-size: 0.82em; min-width: 150px; }
+.mc-logtarget__path {
+    font-family: var(--font-family-mono); font-size: 0.76em; color: var(--text-muted);
+    flex: 1 1 auto; word-break: break-all;
+}
+.mc-copy {
+    appearance: none; border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--text-secondary); font-size: 0.72em; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+}
+.mc-copy:hover { border-color: var(--info); color: var(--info-text); }
+
+/* Mission Control — Overview|Alerts view tabs + Alerts view ----------------- */
+.mc-viewtabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.mc-viewtab {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    padding: 8px 14px; font-size: 0.9em; color: var(--text-secondary);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    display: inline-flex; align-items: center; gap: 6px;
+}
+.mc-viewtab:hover { color: var(--text-primary); }
+.mc-viewtab.is-active { color: var(--text-primary); border-bottom-color: var(--info); font-weight: 600; }
+.mc-viewtab__badge {
+    font-family: var(--font-family-mono); font-size: 0.8em; padding: 0 7px; border-radius: 999px;
+    background: var(--warning-bg); color: var(--warning-text); border: 1px solid var(--warning-border);
+}
+.mc-viewtab__badge--crit { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
+
+.mc-alerts__bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.mc-alerts__filterlabel { color: var(--text-muted); font-size: 0.74em; text-transform: uppercase; letter-spacing: 0.06em; }
+.mc-filter {
+    appearance: none; border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--text-secondary); font-size: 0.8em; padding: 4px 12px; border-radius: 999px; cursor: pointer;
+}
+.mc-filter:hover { color: var(--text-primary); border-color: var(--info); }
+.mc-filter.is-active { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); font-weight: 600; }
+.mc-alerts__role { margin-left: 4px; }
+
+.mc-alerts__list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.mc-alert-row {
+    display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+    border-bottom: 1px solid var(--border-subtle); background: var(--bg-card); flex-wrap: wrap;
+}
+.mc-alert-row:last-child { border-bottom: 0; }
+/* Severity is carried by the status dot — no decorative left rail. */
+.mc-alert-row__name { font-weight: 600; color: var(--text-primary); font-size: 0.9em; }
+.mc-alert-row__reason { color: var(--text-secondary); font-size: 0.84em; }
+.mc-alert-row__meta { margin-left: auto; color: var(--text-muted); font-size: 0.76em; }
+
+.mc-alerts__tlhead { margin: 22px 0 10px; }
+.mc-timeline { display: flex; flex-direction: column; }
+.mc-tl-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 4px;
+    border-bottom: 1px solid var(--border-subtle); font-size: 0.84em;
+}
+.mc-tl-row:last-child { border-bottom: 0; }
+.mc-tl-row__time { color: var(--text-muted); font-size: 0.92em; min-width: 96px; }
+.mc-tl-row__name { color: var(--text-primary); }
+.mc-tl-row__trans { color: var(--text-secondary); }
+.mc-tl-row__meta { margin-left: auto; color: var(--text-muted); font-size: 0.92em; }
+
+/* Mission Control — Alerts: subtabs + clear/archive --------------------------- */
+.mc-alerts__subtabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.mc-clear {
+    appearance: none; border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--text-secondary); font-size: 0.74em; padding: 3px 10px;
+    border-radius: 6px; cursor: pointer; margin-left: 8px; flex: 0 0 auto;
+}
+.mc-clear:hover { border-color: var(--info); color: var(--info-text); background: var(--info-bg); }
+.mc-clear--all { margin-left: auto; }
+.mc-alert-row--archived { opacity: 0.72; }
+
+/* Mission Control — status sparkline + uptime% + response-time trend -------- */
+.mc-host-row__trend { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.mc-spark { display: inline-flex; gap: 1px; align-items: stretch; height: 14px; }
+.mc-spark__t { width: 3px; height: 14px; border-radius: 1px; background: var(--text-muted); }
+.mc-spark__t--ok   { background: var(--success); }
+.mc-spark__t--warn { background: var(--warning); }
+.mc-spark__t--crit { background: var(--danger); }
+.mc-spark__t--na   { background: var(--border); }
+.mc-uptime { font-size: 0.76em; font-weight: 600; }
+.mc-uptime--ok   { color: var(--success-text); }
+.mc-uptime--warn { color: var(--warning-text); }
+.mc-uptime--crit { color: var(--danger-text); }
+
+.mc-drawer__trend {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px; background: var(--bg-card);
+}
+.mc-drawer__trendrow { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.mc-drawer__trendrow .mc-spark { height: 18px; }
+.mc-drawer__trendrow .mc-spark__t { height: 18px; }
+.mc-drawer__trendrow .mc-uptime { font-size: 0.92em; }
+.mc-rt { width: 100%; height: 56px; display: block; }
+.mc-rt__meta { color: var(--text-muted); font-size: 0.76em; margin-top: 4px; font-family: var(--font-family-mono); }
+
+/* Mission Control — interactive map health legend --------------------------- */
+.mc-health-legend { display: inline-flex; align-items: center; gap: 14px; margin-left: 6px; }
+.mc-health-legend__item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 0.78em; }
+.mc-health-legend__item .mc-dot { animation: none; }
+
+/* Mission Control — suppress the C2-beacon banner inside the health map
+   (it's a session concern, irrelevant to infra health, and overlaps nodes). */
+.mc-topo-overview__mount #topology-beacon-banner,
+.mc-topology #topology-beacon-banner { display: none !important; }
+
+/* "unmonitored" pill in the fleet strip — honest about off-vantage hosts. */
+.mc-fleet-strip__unmon { color: var(--text-muted); }
